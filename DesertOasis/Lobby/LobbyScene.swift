@@ -31,8 +31,8 @@ final class LobbyScene: SCNScene {
     /// Closed local pose for every animated hinge/page node (keyed by node name).
     private var diaryClosedPoses: [String: DiaryPose] = [:]
 
-    /// Open clip length: 30 frames @ 24 fps.
-    private var diaryAnimDuration: TimeInterval { 1.25 }
+    /// Cover hinge open: ~22 frames @ 24 fps (pages are not played).
+    private var diaryAnimDuration: TimeInterval { 22.0 / 24.0 }
 
     private struct DiaryPose {
         var position: SCNVector3
@@ -213,10 +213,6 @@ final class LobbyScene: SCNScene {
         }
     }
 
-    private func forEachDiaryPlayer(in root: SCNNode, _ body: (SCNAnimationPlayer) -> Void) {
-        forEachAnimatedDiaryNode(in: root) { _, player in body(player) }
-    }
-
     // MARK: - Table and instruments
 
     private func setupTable() {
@@ -350,8 +346,9 @@ final class LobbyScene: SCNScene {
 
     // MARK: - Diary open animation
 
-    /// Plays the open animation once, holds the open pose, then calls completion.
-    /// Already-opened diaries skip the clip and complete immediately.
+    /// Plays the cover hinge open once, holds that pose, then calls completion.
+    /// Page-flip clips are skipped (wrong pivot in the USDZ). Already-opened diaries
+    /// skip the clip and complete immediately.
     func openDiary(at index: Int, completion: @escaping () -> Void) {
         guard index < diaryNodes.count else { completion(); return }
 
@@ -363,7 +360,9 @@ final class LobbyScene: SCNScene {
 
         let diary = diaryNodes[index]
         var played = false
-        forEachDiaryPlayer(in: diary) { player in
+        // Only drive the cover hinge — page_* clips flip from the wrong origin.
+        forEachAnimatedDiaryNode(in: diary) { node, player in
+            guard node.name?.contains("hinge") == true else { return }
             configureDiaryAnimation(player.animation)
             player.speed = 1
             player.paused = false
