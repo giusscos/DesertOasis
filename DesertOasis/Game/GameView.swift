@@ -10,9 +10,12 @@ struct GameView: View {
     @State private var joystickOffset: CGSize = .zero
     @State private var lastCameraTranslation: CGFloat = 0
     @State private var nearbyNPCPrompt: NPCNode? = nil
-    @State private var oasisReachedMessage: String? = nil
+    @State private var toastMessage: String? = nil
     @State private var oasisFoundSet: Set<String> = []
     @State private var sceneBuilt = false
+    @State private var showDeliverPrompt = false
+    @State private var carryingWater = false
+    @State private var campWaterLevel: Float = 0
 
     var slot: SaveSlot { gameManager.saveSlots[slotIndex] }
 
@@ -60,27 +63,50 @@ struct GameView: View {
                 .animation(.spring(duration: 0.3), value: nearbyNPCPrompt != nil)
             }
 
-            // Oasis found message
-            if let msg = oasisReachedMessage {
+            // Deliver water prompt
+            if showDeliverPrompt, !dialogueManager.isVisible, nearbyNPCPrompt == nil {
+                VStack {
+                    Spacer()
+                    Button {
+                        _ = desertScene.tryDeliverWater()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "drop.fill")
+                            Text("Deliver water")
+                                .font(.system(size: 16, weight: .bold, design: .serif))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(Color(red: 0.15, green: 0.50, blue: 0.80), in: Capsule())
+                        .shadow(radius: 6)
+                    }
+                    .padding(.bottom, 140)
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
+
+            // Toast
+            if let msg = toastMessage {
                 VStack {
                     Text(msg)
-                        .font(.system(size: 18, weight: .bold, design: .serif))
+                        .font(.system(size: 17, weight: .bold, design: .serif))
                         .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
-                        .background(Color(red: 0.15, green: 0.50, blue: 0.80).opacity(0.9), in: Capsule())
+                        .background(Color(red: 0.15, green: 0.50, blue: 0.80).opacity(0.92), in: Capsule())
                         .shadow(radius: 8)
                         .padding(.top, 8)
                     Spacer()
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
-                .animation(.easeOut(duration: 0.5), value: oasisReachedMessage != nil)
+                .animation(.easeOut(duration: 0.5), value: toastMessage != nil)
             }
 
             // HUD
             VStack {
-                HStack {
-                    // Back to menu
+                HStack(alignment: .top) {
                     Button {
                         gameManager.currentScreen = .slotSelection
                     } label: {
@@ -93,11 +119,29 @@ struct GameView: View {
 
                     Spacer()
 
-                    // Stats
-                    HStack(spacing: 14) {
-                        statBadge(icon: "drop.fill", value: slot.waterFound, color: .blue)
-                        statBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
-                        statBadge(icon: "checkmark.circle.fill", value: slot.tasksCompleted, color: .green)
+                    VStack(alignment: .trailing, spacing: 8) {
+                        campWaterBar
+
+                        HStack(spacing: 10) {
+                            if carryingWater {
+                                Label("Full bucket", systemImage: "drop.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color.blue.opacity(0.55), in: Capsule())
+                            }
+                            if slot.hasWaterCompass {
+                                Image(systemName: "location.north.circle.fill")
+                                    .foregroundStyle(.yellow)
+                            }
+                            if slot.hasWaterDetector {
+                                Image(systemName: "antenna.radiowaves.left.and.right")
+                                    .foregroundStyle(.orange)
+                            }
+                            statBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
+                            statBadge(icon: "checkmark.circle.fill", value: slot.waterDeliveries, color: .green)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -105,7 +149,6 @@ struct GameView: View {
 
                 Spacer()
 
-                // Joystick
                 if !dialogueManager.isVisible {
                     HStack {
                         JoystickView(offset: $joystickOffset) { dx, dy in
@@ -122,9 +165,31 @@ struct GameView: View {
         .onAppear {
             guard !sceneBuilt else { return }
             sceneBuilt = true
+            carryingWater = slot.isCarryingWater
+            campWaterLevel = slot.campWaterLevel
             desertScene.build(from: slot)
             wireCallbacks()
         }
+    }
+
+    private var campWaterBar: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Text("Camp water")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.black.opacity(0.35))
+                    Capsule()
+                        .fill(Color(red: 0.25, green: 0.60, blue: 0.90))
+                        .frame(width: max(4, geo.size.width * CGFloat(campWaterLevel)))
+                }
+            }
+            .frame(width: 120, height: 10)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func statBadge(icon: String, value: Int, color: Color) -> some View {
@@ -145,7 +210,6 @@ struct GameView: View {
             guard nearbyNPCPrompt?.npcID != npc.npcID,
                   dialogueManager.activeNPC?.npcID != npc.npcID else { return }
             withAnimation { nearbyNPCPrompt = npc }
-            // Auto-dismiss after 4 s if no interaction
             Task {
                 try? await Task.sleep(for: .seconds(4))
                 await MainActor.run {
@@ -161,12 +225,54 @@ struct GameView: View {
 
             let found = slot.oasisFound + 1
             gameManager.updateProgress(slotIndex: slotIndex, oasisFound: found)
+            showToast("Oasis found! (\(found))")
+        }
 
-            withAnimation { oasisReachedMessage = "Oasis found! (\(found))" }
-            Task {
-                try? await Task.sleep(for: .seconds(3))
-                await MainActor.run { withAnimation { oasisReachedMessage = nil } }
+        desertScene.onWaterCollected = {
+            carryingWater = true
+            gameManager.updateProgress(
+                slotIndex: slotIndex,
+                waterFound: slot.waterFound + 1,
+                isCarryingWater: true
+            )
+            showToast("Bucket filled — bring it to camp!")
+        }
+
+        desertScene.onWaterDelivered = { level, unlockedCompass, unlockedDetector in
+            carryingWater = false
+            campWaterLevel = level
+            showDeliverPrompt = false
+
+            var deliveries = slot.waterDeliveries + 1
+            gameManager.updateProgress(
+                slotIndex: slotIndex,
+                tasksCompleted: slot.tasksCompleted + 1,
+                campWaterLevel: level,
+                waterDeliveries: deliveries,
+                isCarryingWater: false,
+                hasWaterCompass: unlockedCompass ? true : nil,
+                hasWaterDetector: unlockedDetector ? true : nil
+            )
+
+            if unlockedCompass {
+                showToast("Water delivered! Compass unlocked.")
+            } else if unlockedDetector {
+                showToast("Water delivered! Detector unlocked.")
+            } else {
+                showToast("Water delivered to camp! (\(deliveries))")
             }
+        }
+
+        desertScene.onNearBarrel = { canDeliver in
+            withAnimation { showDeliverPrompt = canDeliver }
+        }
+    }
+
+    private func showToast(_ message: String) {
+        withAnimation { toastMessage = message }
+        Task {
+            try? await Task.sleep(for: .seconds(2.8))
+            await MainActor.run { withAnimation { toastMessage = nil } }
         }
     }
 

@@ -68,13 +68,29 @@ final class GameManager {
         persistSlots()
     }
 
-    func updateProgress(slotIndex: Int, waterFound: Int? = nil, oasisFound: Int? = nil,
-                        tasksCompleted: Int? = nil, posX: Float? = nil, posZ: Float? = nil) {
-        if let w = waterFound      { saveSlots[slotIndex].waterFound      = w }
-        if let o = oasisFound      { saveSlots[slotIndex].oasisFound      = o }
-        if let t = tasksCompleted  { saveSlots[slotIndex].tasksCompleted  = t }
-        if let x = posX            { saveSlots[slotIndex].playerPositionX = x }
-        if let z = posZ            { saveSlots[slotIndex].playerPositionZ = z }
+    func updateProgress(
+        slotIndex: Int,
+        waterFound: Int? = nil,
+        oasisFound: Int? = nil,
+        tasksCompleted: Int? = nil,
+        campWaterLevel: Float? = nil,
+        waterDeliveries: Int? = nil,
+        isCarryingWater: Bool? = nil,
+        hasWaterCompass: Bool? = nil,
+        hasWaterDetector: Bool? = nil,
+        posX: Float? = nil,
+        posZ: Float? = nil
+    ) {
+        if let w = waterFound       { saveSlots[slotIndex].waterFound       = w }
+        if let o = oasisFound       { saveSlots[slotIndex].oasisFound       = o }
+        if let t = tasksCompleted   { saveSlots[slotIndex].tasksCompleted   = t }
+        if let c = campWaterLevel   { saveSlots[slotIndex].campWaterLevel   = c }
+        if let d = waterDeliveries  { saveSlots[slotIndex].waterDeliveries  = d }
+        if let carrying = isCarryingWater { saveSlots[slotIndex].isCarryingWater = carrying }
+        if let compass = hasWaterCompass { saveSlots[slotIndex].hasWaterCompass = compass }
+        if let detector = hasWaterDetector { saveSlots[slotIndex].hasWaterDetector = detector }
+        if let x = posX             { saveSlots[slotIndex].playerPositionX  = x }
+        if let z = posZ             { saveSlots[slotIndex].playerPositionZ  = z }
         saveSlots[slotIndex].lastUpdated = Date()
         persistSlots()
     }

@@ -8,6 +8,12 @@ struct SaveSlot: Codable, Identifiable {
     var waterFound: Int
     var oasisFound: Int
     var tasksCompleted: Int
+    /// Water delivered to the camp barrel (0…1).
+    var campWaterLevel: Float
+    var waterDeliveries: Int
+    var isCarryingWater: Bool
+    var hasWaterCompass: Bool
+    var hasWaterDetector: Bool
     var desertSeed: UInt64
     var playerPositionX: Float
     var playerPositionZ: Float
@@ -29,6 +35,11 @@ struct SaveSlot: Codable, Identifiable {
         waterFound = 0
         oasisFound = 0
         tasksCompleted = 0
+        campWaterLevel = 0
+        waterDeliveries = 0
+        isCarryingWater = false
+        hasWaterCompass = false
+        hasWaterDetector = false
         desertSeed = UInt64.random(in: 1...UInt64.max)
         playerPositionX = 0
         playerPositionZ = 0
@@ -61,5 +72,35 @@ struct SaveSlot: Codable, Identifiable {
             case .woman: "👩"
             }
         }
+    }
+
+    // MARK: - Backward-compatible decode
+
+    enum CodingKeys: String, CodingKey {
+        case id, characterGender, playerName, lastUpdated
+        case waterFound, oasisFound, tasksCompleted
+        case campWaterLevel, waterDeliveries, isCarryingWater
+        case hasWaterCompass, hasWaterDetector
+        case desertSeed, playerPositionX, playerPositionZ
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        characterGender = try c.decodeIfPresent(CharacterGender.self, forKey: .characterGender)
+        playerName = try c.decodeIfPresent(String.self, forKey: .playerName)
+        lastUpdated = try c.decodeIfPresent(Date.self, forKey: .lastUpdated)
+        waterFound = try c.decodeIfPresent(Int.self, forKey: .waterFound) ?? 0
+        oasisFound = try c.decodeIfPresent(Int.self, forKey: .oasisFound) ?? 0
+        tasksCompleted = try c.decodeIfPresent(Int.self, forKey: .tasksCompleted) ?? 0
+        campWaterLevel = try c.decodeIfPresent(Float.self, forKey: .campWaterLevel) ?? 0
+        waterDeliveries = try c.decodeIfPresent(Int.self, forKey: .waterDeliveries) ?? 0
+        isCarryingWater = try c.decodeIfPresent(Bool.self, forKey: .isCarryingWater) ?? false
+        hasWaterCompass = try c.decodeIfPresent(Bool.self, forKey: .hasWaterCompass) ?? false
+        hasWaterDetector = try c.decodeIfPresent(Bool.self, forKey: .hasWaterDetector) ?? false
+        desertSeed = try c.decodeIfPresent(UInt64.self, forKey: .desertSeed)
+            ?? UInt64.random(in: 1...UInt64.max)
+        playerPositionX = try c.decodeIfPresent(Float.self, forKey: .playerPositionX) ?? 0
+        playerPositionZ = try c.decodeIfPresent(Float.self, forKey: .playerPositionZ) ?? 0
     }
 }

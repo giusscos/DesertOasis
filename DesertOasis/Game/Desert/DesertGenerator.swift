@@ -123,23 +123,24 @@ struct DesertGenerator {
 
     // MARK: Oasis placement
 
-    func generateOases(count: Int = 5) -> [OasisInfo] {
+    func generateOases(count: Int = 5, campClearRadius: Float = 55) -> [OasisInfo] {
         var oases: [OasisInfo] = []
         var rng = SeededRandom(seed: seed &+ 42)
         let half = totalSize * 0.5
 
-        for i in 0..<count {
+        for _ in 0..<count {
             var attempts = 0
-            while attempts < 30 {
+            while attempts < 40 {
                 let wx = rng.nextFloat() * totalSize - half
                 let wz = rng.nextFloat() * totalSize - half
+                let distFromCamp = sqrt(wx * wx + wz * wz)
                 let h = height(atWorldX: wx, worldZ: wz)
-                // Prefer low areas for oases
-                if h < heightScale * 0.35 {
+                // Prefer low areas; keep clear of the home camp
+                if h < heightScale * 0.35, distFromCamp > campClearRadius {
                     let tooClose = oases.contains {
                         let dx = $0.position.x - wx
                         let dz = $0.position.z - wz
-                        return sqrt(dx*dx + dz*dz) < 60
+                        return sqrt(dx * dx + dz * dz) < 60
                     }
                     if !tooClose {
                         let radius = 6 + rng.nextFloat() * 8
@@ -149,7 +150,6 @@ struct DesertGenerator {
                 }
                 attempts += 1
             }
-            _ = i // suppress warning
         }
         return oases
     }
@@ -160,16 +160,8 @@ struct DesertGenerator {
         let container = SCNNode()
         container.position = info.position
 
-        // Animated water disc (prop is 10 m diameter = 5 m radius; scale to match)
-        let water = AssetLoader.loadProp("prop_oasis_water")
-        let waterScale = info.radius / 5.0
-        water.scale = SCNVector3(waterScale, 1, waterScale)
-        water.position = SCNVector3(0, 0.05, 0)
-        // Start ripple animation if present
-        water.enumerateHierarchy { node, _ in
-            for key in node.animationKeys { node.animationPlayer(forKey: key)?.play() }
-        }
-        container.addChildNode(water)
+        // Interactive height-field water (ripples, splash, ambient waves)
+        container.addChildNode(OasisWaterNode(radius: info.radius))
 
         // Palm trees around the oasis edge
         var rng = SeededRandom(seed: seed &+ UInt64(info.position.x.bitPattern))
@@ -211,7 +203,7 @@ struct DesertGenerator {
 
     // MARK: Scatter props
 
-    func scatterProps(around oases: [OasisInfo]) -> SCNNode {
+    func scatterProps(around oases: [OasisInfo], campClearRadius: Float = 22) -> SCNNode {
         let container = SCNNode()
         var rng = SeededRandom(seed: seed &+ 999)
         let half = totalSize * 0.5
@@ -223,11 +215,15 @@ struct DesertGenerator {
             }
         }
 
+        func isNearCamp(_ wx: Float, _ wz: Float) -> Bool {
+            sqrt(wx * wx + wz * wz) < campClearRadius
+        }
+
         // Tall saguaro and barrel cacti
         for _ in 0..<80 {
             let wx = rng.nextFloat() * totalSize - half
             let wz = rng.nextFloat() * totalSize - half
-            if !isNearOasis(wx, wz) {
+            if !isNearOasis(wx, wz), !isNearCamp(wx, wz) {
                 let h = height(atWorldX: wx, worldZ: wz)
                 let cactus = buildCactus(rng: &rng)
                 cactus.position = SCNVector3(wx, h, wz)
@@ -240,6 +236,7 @@ struct DesertGenerator {
         for _ in 0..<120 {
             let wx = rng.nextFloat() * totalSize - half
             let wz = rng.nextFloat() * totalSize - half
+            guard !isNearCamp(wx, wz) else { continue }
             let h = height(atWorldX: wx, worldZ: wz)
             let rock = buildRock(rng: &rng)
             rock.position = SCNVector3(wx, h, wz)
@@ -251,7 +248,7 @@ struct DesertGenerator {
         for _ in 0..<25 {
             let wx = rng.nextFloat() * totalSize - half
             let wz = rng.nextFloat() * totalSize - half
-            if !isNearOasis(wx, wz) {
+            if !isNearOasis(wx, wz), !isNearCamp(wx, wz) {
                 let h = height(atWorldX: wx, worldZ: wz)
                 let tree = AssetLoader.loadProp("prop_dead_tree")
                 tree.position = SCNVector3(wx, h, wz)
@@ -264,6 +261,7 @@ struct DesertGenerator {
         for _ in 0..<30 {
             let wx = rng.nextFloat() * totalSize - half
             let wz = rng.nextFloat() * totalSize - half
+            guard !isNearCamp(wx, wz) else { continue }
             let h = height(atWorldX: wx, worldZ: wz)
             let dune = AssetLoader.loadProp("prop_sand_dune")
             let s = 0.7 + rng.nextFloat() * 0.8
@@ -277,6 +275,7 @@ struct DesertGenerator {
         for _ in 0..<15 {
             let wx = rng.nextFloat() * totalSize - half
             let wz = rng.nextFloat() * totalSize - half
+            guard !isNearCamp(wx, wz) else { continue }
             let h = height(atWorldX: wx, worldZ: wz)
             let weed = AssetLoader.loadProp("prop_tumbleweed")
             weed.position = SCNVector3(wx, h + 0.1, wz)

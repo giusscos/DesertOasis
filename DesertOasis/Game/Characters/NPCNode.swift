@@ -40,20 +40,21 @@ enum NPCPersonality: CaseIterable {
             """
         case .merchant:
             return """
-            You are a friendly desert merchant who trades goods for water and oasis locations. \
-            You have information about nearby oases to trade. Speak in a warm, business-like tone. \
-            Keep responses under 3 sentences. Occasionally barter.
+            You are a friendly desert merchant living at the player's camp. You trade tips \
+            about oasis locations for water delivered to the shared camp barrel. Speak in a \
+            warm, business-like tone. Keep responses under 3 sentences. Occasionally barter.
             """
         case .child:
             return """
-            You are a small child lost in the desert looking for your family. Speak in a scared, \
-            simple way. You are thirsty and scared. Ask the player to help you find your family or \
-            water. Keep responses under 2 sentences.
+            You are a small child living at the desert camp. You worry when the water barrel \
+            is empty. Speak in a scared, simple way. Ask the player to find oasis water and \
+            bring it home. Keep responses under 2 sentences.
             """
         case .elder:
             return """
-            You are a wise desert elder who knows the land well. Speak in proverbs and hints about \
-            where water can be found. Keep responses short, mystical, and under 3 sentences.
+            You are a wise desert elder living at the camp. Speak in proverbs and hints about \
+            where water can be found. Encourage the player to fill the camp barrel for the \
+            neighbours. Keep responses short, mystical, and under 3 sentences.
             """
         case .lost:
             return """
@@ -66,9 +67,9 @@ enum NPCPersonality: CaseIterable {
     var greeting: String {
         switch self {
         case .wanderer: "Please… do you have water? I've been walking for so long…"
-        case .merchant: "Ah, a traveller! I have supplies to trade. Know where the nearest oasis is?"
-        case .child:    "Hello? I'm lost… and really thirsty. Can you help me?"
-        case .elder:    "The desert speaks to those who listen. You seek water, do you not?"
+        case .merchant: "Ah, a neighbour! Bring water to the barrel and I'll trade you oasis tips."
+        case .child:    "Our barrel is almost empty… can you find an oasis?"
+        case .elder:    "The desert speaks to those who listen. Fill our camp, and the oasis will find you."
         case .lost:     "Oh thank goodness! I have no idea where I am. Do you have water?"
         }
     }
@@ -76,10 +77,10 @@ enum NPCPersonality: CaseIterable {
     var task: NPCTask {
         switch self {
         case .wanderer: NPCTask(description: "Bring water to the wanderer")
-        case .merchant: NPCTask(description: "Show the merchant an oasis")
-        case .child:    NPCTask(description: "Help the lost child find their family")
-        case .elder:    NPCTask(description: "Listen to the elder's wisdom (find 2 oases)")
-        case .lost:     NPCTask(description: "Guide the lost traveller to safety")
+        case .merchant: NPCTask(description: "Trade oasis news with the merchant")
+        case .child:    NPCTask(description: "Fill the camp barrel for the child")
+        case .elder:    NPCTask(description: "Deliver water to help the camp")
+        case .lost:     NPCTask(description: "Guide the lost traveller toward an oasis")
         }
     }
 
