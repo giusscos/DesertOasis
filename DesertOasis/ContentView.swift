@@ -8,7 +8,6 @@ struct ContentView: View {
             switch gameManager.currentScreen {
             case .playing(let slotIndex):
                 GameView(gameManager: gameManager, slotIndex: slotIndex)
-                    .ignoresSafeArea()
             default:
                 LobbyContainerView(gameManager: gameManager)
             }

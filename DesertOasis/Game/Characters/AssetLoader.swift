@@ -38,6 +38,7 @@ enum AssetLoader {
     private static var propCache: [String: SCNNode] = [:]
 
     /// Returns a cloned instance of the named prop USDZ. The first load caches the template.
+    /// Wrapped like characters so callers can set yaw/position without undoing the Z-up correction.
     static func loadProp(_ name: String) -> SCNNode {
         if let template = propCache[name] {
             return template.clone()
@@ -45,8 +46,12 @@ enum AssetLoader {
         guard let scene = SCNScene(named: "\(name).usdz") else {
             return placeholderNode()
         }
-        let template = scene.rootNode.clone()
-        applyZUpCorrection(template)
+        let model = scene.rootNode.clone()
+        applyZUpCorrection(model)
+
+        let template = SCNNode()
+        template.name = name
+        template.addChildNode(model)
         propCache[name] = template
         return template.clone()
     }

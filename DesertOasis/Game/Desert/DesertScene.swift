@@ -9,7 +9,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var generator: DesertGenerator!
 
     let cameraNode = SCNNode()
-    let cameraArmNode = SCNNode()   // parent of camera, attached to player
+    let cameraArmNode = SCNNode()   // follows player position; yaw is independent
 
     var onNPCProximity: ((NPCNode) -> Void)?
     var onOasisReached: ((OasisInfo) -> Void)?
@@ -98,6 +98,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     // MARK: - Camera (third person, follows player)
 
+    private let cameraLookTarget = SCNNode()
+
     private func setupCamera() {
         let camera = SCNCamera()
         camera.fieldOfView = 65
@@ -105,13 +107,24 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         camera.zFar = 500
         cameraNode.camera = camera
 
-        // Arm length and elevation
-        cameraArmNode.position = SCNVector3(0, 1.0, 0)  // pivot above player head
-        cameraNode.position = SCNVector3(0, 3.5, 8.0)   // offset behind/above
-        cameraNode.look(at: SCNVector3(0, 0.8, 0))
+        // Look target rides with the player; the arm does not — otherwise turning
+        // the character also yaws the camera and camera-relative move breaks.
+        cameraLookTarget.position = SCNVector3(0, 1.2, 0)
+        playerNode.addChildNode(cameraLookTarget)
 
-        playerNode.addChildNode(cameraArmNode)
+        cameraNode.position = SCNVector3(0, 2.8, 7.5)
+        let lookAt = SCNLookAtConstraint(target: cameraLookTarget)
+        lookAt.isGimbalLockEnabled = true
+        cameraNode.constraints = [lookAt]
+
+        rootNode.addChildNode(cameraArmNode)
         cameraArmNode.addChildNode(cameraNode)
+        syncCameraFollow()
+    }
+
+    private func syncCameraFollow() {
+        guard let playerNode else { return }
+        cameraArmNode.position = playerNode.position
     }
 
     // MARK: - NPCs
@@ -147,39 +160,71 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     // MARK: - Player movement
 
-    private var moveDirection: SCNVector3 = .init(0, 0, 0)
-    private var isMoving = false
+    /// Stick axes: x = strafe (right +), y = forward (stick-up +). Magnitude ≤ 1.
+    private var moveInput: SIMD2<Float> = .zero
+    private let moveSpeed: Float = 5.5
+    private let turnSpeed: Float = 10.0
+    private let moveDeadzone: Float = 0.08
 
-    func setMoveInput(dx: Float, dz: Float) {
+    /// Called from the joystick; motion is applied in `update(deltaTime:)`.
+    func setMoveInput(dx: Float, dy: Float) {
+        var input = SIMD2<Float>(dx, dy)
+        let mag = simd_length(input)
+        if mag > 1 {
+            input /= mag
+        }
+        moveInput = input
+    }
+
+    /// Per-frame tick from the SCNView renderer.
+    func update(deltaTime: Float) {
+        guard playerNode != nil else { return }
+        let dt = max(0, min(deltaTime, 1.0 / 20.0))
+        syncCameraFollow()
+        applyMovement(deltaTime: dt)
+        checkProximity()
+    }
+
+    private func applyMovement(deltaTime: Float) {
         guard let playerNode else { return }
 
-        let mag = sqrt(dx * dx + dz * dz)
-        isMoving = mag > 0.05
-
-        if isMoving {
-            let speed: Float = 5.0
-            let nx = dx / mag; let nz = dz / mag
-
-            // Rotate player toward movement direction (in camera space)
-            let camYaw = cameraArmNode.eulerAngles.y
-            let worldX = nx * cos(camYaw) + nz * sin(camYaw)
-            let worldZ = -nx * sin(camYaw) + nz * cos(camYaw)
-
-            let targetYaw = atan2(worldX, worldZ)
-            let currentYaw = playerNode.eulerAngles.y
-            let delta = shortestAngle(from: currentYaw, to: targetYaw)
-            playerNode.eulerAngles.y += delta * 0.15
-
-            // Move in world space
-            let groundH = generator.height(atWorldX: playerNode.position.x + worldX * speed * 0.016,
-                                            worldZ: playerNode.position.z + worldZ * speed * 0.016)
-            playerNode.position.x += worldX * speed * 0.016
-            playerNode.position.z += worldZ * speed * 0.016
-            playerNode.position.y = groundH + 0.01
+        let inputLen = simd_length(moveInput)
+        guard inputLen > moveDeadzone else {
+            playerNode.setWalking(false)
+            return
         }
 
-        playerNode.setWalking(isMoving)
-        checkProximity()
+        // Arm yaw 0: camera sits on +Z looking toward −Z (into the scene).
+        let yaw = cameraArmNode.eulerAngles.y
+        let sinY = sin(yaw)
+        let cosY = cos(yaw)
+        let forward = SIMD2<Float>(-sinY, -cosY) // XZ
+        let right   = SIMD2<Float>( cosY, -sinY)
+
+        let desired = right * moveInput.x + forward * moveInput.y
+        let desiredLen = simd_length(desired)
+        guard desiredLen > 0.0001 else {
+            playerNode.setWalking(false)
+            return
+        }
+        let dir = desired / desiredLen
+
+        // Analog speed from stick magnitude
+        let speed = moveSpeed * min(inputLen, 1)
+        let step = dir * speed * deltaTime
+
+        let nextX = playerNode.position.x + step.x
+        let nextZ = playerNode.position.z + step.y
+        let groundH = generator.height(atWorldX: nextX, worldZ: nextZ)
+        playerNode.position = SCNVector3(nextX, groundH + 0.01, nextZ)
+
+        // Face move direction (+Z is character forward after AssetLoader correction)
+        let targetYaw = atan2(dir.x, dir.y)
+        let delta = shortestAngle(from: playerNode.eulerAngles.y, to: targetYaw)
+        let maxTurn = turnSpeed * deltaTime
+        playerNode.eulerAngles.y += max(-maxTurn, min(maxTurn, delta))
+
+        playerNode.setWalking(true)
     }
 
     private func shortestAngle(from a: Float, to b: Float) -> Float {

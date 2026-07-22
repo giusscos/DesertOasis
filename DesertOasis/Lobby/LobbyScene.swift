@@ -66,7 +66,7 @@ final class LobbyScene: SCNScene {
     // MARK: - Build
 
     private func buildScene() {
-        background.contents = UIColor(white: 0.04, alpha: 1)
+        background.contents = UIColor(red: 0.04, green: 0.05, blue: 0.11, alpha: 1)
         setupLighting()
         setupFloor()
         setupTent()
@@ -79,81 +79,85 @@ final class LobbyScene: SCNScene {
     // MARK: - Lighting
 
     private func setupLighting() {
-        // Warm ambient so canvas walls stay readable instead of falling to black
+        // Warm ambient — low base so walls hold depth and don't blow out
         let ambient = SCNLight()
         ambient.type = .ambient
-        ambient.color = UIColor(red: 0.42, green: 0.34, blue: 0.26, alpha: 1)
-        ambient.intensity = 180
+        ambient.color = UIColor(red: 0.48, green: 0.36, blue: 0.24, alpha: 1)
+        ambient.intensity = 70
         let ambientNode = SCNNode()
         ambientNode.light = ambient
         rootNode.addChildNode(ambientNode)
 
-        // Cool moonlight through the open +Z entrance (rim on backs)
-        let fill = SCNLight()
-        fill.type = .directional
-        fill.color = UIColor(red: 0.45, green: 0.55, blue: 0.78, alpha: 1)
-        fill.intensity = 55
-        let fillNode = SCNNode()
-        fillNode.light = fill
-        fillNode.eulerAngles = SCNVector3(-Float.pi / 5, Float.pi, 0)
-        rootNode.addChildNode(fillNode)
-
-        // Warm key under the hanging lantern
+        // Main lantern — lowered to y=1.9 so it doesn't clip the tent peak canvas
         let key = SCNLight()
         key.type = .omni
-        key.color = UIColor(red: 1.0, green: 0.68, blue: 0.38, alpha: 1)
-        key.intensity = 200
-        key.attenuationStartDistance = 0.4
-        key.attenuationEndDistance = 8
+        key.color = UIColor(red: 1.0, green: 0.74, blue: 0.44, alpha: 1)
+        key.intensity = 60
+        key.attenuationStartDistance = 1.0
+        key.attenuationEndDistance = 10
         let keyNode = SCNNode()
         keyNode.light = key
-        keyNode.position = SCNVector3(0, 2.6, 0)
+        keyNode.position = SCNVector3(0, 1.9, 0)
         rootNode.addChildNode(keyNode)
 
-        // Soft floor bounce
+        // Floor bounce — very subtle so it doesn't create a visible hotspot
         let bounce = SCNLight()
         bounce.type = .omni
-        bounce.color = UIColor(red: 0.80, green: 0.60, blue: 0.40, alpha: 1)
-        bounce.intensity = 60
+        bounce.color = UIColor(red: 0.85, green: 0.62, blue: 0.38, alpha: 1)
+        bounce.intensity = 10
+        bounce.attenuationStartDistance = 0.5
         bounce.attenuationEndDistance = 7
         let bounceNode = SCNNode()
         bounceNode.light = bounce
-        bounceNode.position = SCNVector3(0, 0.35, 0.5)
+        bounceNode.position = SCNVector3(0, 0.3, 0)
         rootNode.addChildNode(bounceNode)
 
-        // Rear fill — lights the back canvas wall, bed, and table
+        // Rear warm fill — lights the mid-interior and props from the back half
         let rear = SCNLight()
         rear.type = .omni
-        rear.color = UIColor(red: 1.0, green: 0.72, blue: 0.45, alpha: 1)
-        rear.intensity = 140
+        rear.color = UIColor(red: 1.0, green: 0.72, blue: 0.46, alpha: 1)
+        rear.intensity = 50
         rear.attenuationStartDistance = 0.5
-        rear.attenuationEndDistance = 7
+        rear.attenuationEndDistance = 9
         let rearNode = SCNNode()
         rearNode.light = rear
-        rearNode.position = SCNVector3(0, 2.2, -3.2)
+        rearNode.position = SCNVector3(0, 1.6, -2.0)
         rootNode.addChildNode(rearNode)
 
-        // Bed-side wash
+        // Bed-side wash — short range so it lights only the prop, not the canvas
         let bedLight = SCNLight()
         bedLight.type = .omni
-        bedLight.color = UIColor(red: 1.0, green: 0.65, blue: 0.35, alpha: 1)
-        bedLight.intensity = 70
-        bedLight.attenuationEndDistance = 5
+        bedLight.color = UIColor(red: 1.0, green: 0.68, blue: 0.40, alpha: 1)
+        bedLight.intensity = 14
+        bedLight.attenuationStartDistance = 0.2
+        bedLight.attenuationEndDistance = 3
         let bedLightNode = SCNNode()
         bedLightNode.light = bedLight
-        bedLightNode.position = SCNVector3(-2.5, 1.6, -1.0)
+        bedLightNode.position = SCNVector3(-1.8, 1.4, -1.0)
         rootNode.addChildNode(bedLightNode)
 
-        // Table-side wash
+        // Table-side wash — matches bed side
         let tableLight = SCNLight()
         tableLight.type = .omni
         tableLight.color = UIColor(red: 1.0, green: 0.70, blue: 0.42, alpha: 1)
-        tableLight.intensity = 70
-        tableLight.attenuationEndDistance = 5
+        tableLight.intensity = 14
+        tableLight.attenuationStartDistance = 0.2
+        tableLight.attenuationEndDistance = 3
         let tableLightNode = SCNNode()
         tableLightNode.light = tableLight
-        tableLightNode.position = SCNVector3(2.0, 1.6, -1.0)
+        tableLightNode.position = SCNVector3(1.6, 1.4, -1.0)
         rootNode.addChildNode(tableLightNode)
+
+        // Moonlight — very dim cool directional from outside the entrance, rims the characters
+        // and takes the pure black out of the night opening without warming the interior
+        let moon = SCNLight()
+        moon.type = .directional
+        moon.color = UIColor(red: 0.38, green: 0.46, blue: 0.70, alpha: 1)
+        moon.intensity = 18
+        let moonNode = SCNNode()
+        moonNode.light = moon
+        moonNode.eulerAngles = SCNVector3(-Float.pi * 0.12, Float.pi, 0)
+        rootNode.addChildNode(moonNode)
     }
 
     // MARK: - Floor
@@ -181,8 +185,8 @@ final class LobbyScene: SCNScene {
                 mat.isDoubleSided = true
                 // USD lantern emission is HDR (~6, 3.3, 1) and blows out the interior
                 if emissionIsLit(mat) {
-                    mat.emission.contents = UIColor(red: 1.0, green: 0.50, blue: 0.18, alpha: 1)
-                    mat.emission.intensity = 0.18
+                    mat.emission.contents = UIColor(red: 1.0, green: 0.58, blue: 0.24, alpha: 1)
+                    mat.emission.intensity = 0.25
                 }
             }
         }
@@ -254,8 +258,8 @@ final class LobbyScene: SCNScene {
     private func setupTable() {
         let table = AssetLoader.loadProp("lobby_table")
         table.position = SCNVector3(2.2, 0, -1)
-        // Keep AssetLoader's Z-up correction; yaw 90° only
-        table.eulerAngles.y += Float.pi / -2
+        // Prop is wrapped; yaw on the container is safe
+        table.eulerAngles.y = Float.pi / -2
         // Name the root so the hit-test walk-up in LobbySceneView finds it
         table.name = "settings_zone"
         table.enumerateHierarchy { node, _ in
@@ -327,11 +331,11 @@ final class LobbyScene: SCNScene {
         camera.zNear = 0.1
         camera.zFar = 80
         camera.wantsHDR = true
-        camera.bloomIntensity = 0.04
-        camera.bloomThreshold = 1.5
+        camera.bloomIntensity = 0.09
+        camera.bloomThreshold = 1.3
         camera.minimumExposure = -0.8
-        camera.maximumExposure = 0.4
-        camera.whitePoint = 2.2
+        camera.maximumExposure = 0.0
+        camera.whitePoint = 2.8
         camera.motionBlurIntensity = 0
         cameraNode.camera = camera
         cameraNode.position = titleCameraPos

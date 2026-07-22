@@ -97,14 +97,14 @@ struct DesertGenerator {
             }
         }
 
-        // Indices
+        // Indices — CCW when viewed from +Y so front faces point up (SceneKit back-face culls).
         for z in 0..<(n - 1) {
             for x in 0..<(n - 1) {
                 let tl = Int32(z * n + x)
                 let tr = Int32(z * n + x + 1)
                 let bl = Int32((z + 1) * n + x)
                 let br = Int32((z + 1) * n + x + 1)
-                indices.append(contentsOf: [tl, tr, br, tl, br, bl])
+                indices.append(contentsOf: [tl, bl, br, tl, br, tr])
             }
         }
 

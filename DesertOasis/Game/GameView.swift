@@ -29,7 +29,7 @@ struct GameView: View {
                     Spacer()
                     DialogueView(manager: dialogueManager)
                         .padding(.horizontal, 16)
-                        .padding(.bottom, 160)
+                        .padding(.bottom, 16)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 .animation(.spring(duration: 0.4), value: dialogueManager.isVisible)
@@ -54,7 +54,7 @@ struct GameView: View {
                         .background(Color(red: 0.7, green: 0.45, blue: 0.1), in: Capsule())
                         .shadow(radius: 6)
                     }
-                    .padding(.bottom, 160)
+                    .padding(.bottom, 140)
                 }
                 .transition(.scale.combined(with: .opacity))
                 .animation(.spring(duration: 0.3), value: nearbyNPCPrompt != nil)
@@ -70,7 +70,7 @@ struct GameView: View {
                         .padding(.vertical, 12)
                         .background(Color(red: 0.15, green: 0.50, blue: 0.80).opacity(0.9), in: Capsule())
                         .shadow(radius: 8)
-                        .padding(.top, 80)
+                        .padding(.top, 8)
                     Spacer()
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
@@ -101,19 +101,19 @@ struct GameView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 60)
+                .padding(.top, 8)
 
                 Spacer()
 
                 // Joystick
                 if !dialogueManager.isVisible {
                     HStack {
-                        JoystickView(offset: $joystickOffset) { dx, dz in
-                            desertScene.setMoveInput(dx: dx, dz: dz)
+                        JoystickView(offset: $joystickOffset) { dx, dy in
+                            desertScene.setMoveInput(dx: dx, dy: dy)
                             savePositionDebounced()
                         }
                         .padding(.leading, 28)
-                        .padding(.bottom, 40)
+                        .padding(.bottom, 16)
                         Spacer()
                     }
                 }
@@ -207,9 +207,14 @@ struct GameView: View {
 struct GameSceneView: UIViewRepresentable {
     let scene: DesertScene
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator(scene: scene)
+    }
+
     func makeUIView(context: Context) -> SCNView {
         let v = SCNView()
         v.scene = scene
+        v.delegate = context.coordinator
         v.allowsCameraControl = false
         v.antialiasingMode = .multisampling4X
         v.isPlaying = true
@@ -220,6 +225,27 @@ struct GameSceneView: UIViewRepresentable {
 
     func updateUIView(_ uiView: SCNView, context: Context) {
         uiView.pointOfView = scene.cameraNode
+        context.coordinator.scene = scene
+    }
+
+    final class Coordinator: NSObject, SCNSceneRendererDelegate {
+        var scene: DesertScene
+        private var lastTime: TimeInterval?
+
+        init(scene: DesertScene) {
+            self.scene = scene
+        }
+
+        func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+            let dt: Float
+            if let lastTime {
+                dt = Float(time - lastTime)
+            } else {
+                dt = 1.0 / 60.0
+            }
+            lastTime = time
+            scene.update(deltaTime: dt)
+        }
     }
 }
 
@@ -227,6 +253,7 @@ struct GameSceneView: UIViewRepresentable {
 
 struct JoystickView: View {
     @Binding var offset: CGSize
+    /// dx = right, dy = forward (stick-up is positive).
     var onMove: (Float, Float) -> Void
 
     private let radius: CGFloat = 55
@@ -247,10 +274,11 @@ struct JoystickView: View {
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { v in
-                    let dx = Float(v.translation.width / radius)
-                    let dz = Float(v.translation.height / radius)
-                    offset = v.translation
-                    onMove(dx, dz)
+                    let clamped = clampToRadius(v.translation)
+                    offset = clamped
+                    let dx = Float(clamped.width / radius)
+                    let dy = Float(-clamped.height / radius) // screen-up → forward +
+                    onMove(dx, dy)
                 }
                 .onEnded { _ in
                     offset = .zero
@@ -260,11 +288,13 @@ struct JoystickView: View {
     }
 
     private var clampedOffset: CGSize {
-        let len = sqrt(offset.width * offset.width + offset.height * offset.height)
-        if len <= radius {
-            return offset
-        }
+        clampToRadius(offset)
+    }
+
+    private func clampToRadius(_ value: CGSize) -> CGSize {
+        let len = sqrt(value.width * value.width + value.height * value.height)
+        guard len > radius else { return value }
         let scale = radius / len
-        return CGSize(width: offset.width * scale, height: offset.height * scale)
+        return CGSize(width: value.width * scale, height: value.height * scale)
     }
 }
