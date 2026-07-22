@@ -4,7 +4,6 @@ struct LobbyContainerView: View {
     @Bindable var gameManager: GameManager
     @State private var lobbyScene = LobbyScene()
     @State private var cameraState: LobbyCameraState = .title
-    @State private var showCharacterCreation = false
     @State private var pendingSlotIndex: Int? = nil
 
     var body: some View {
@@ -13,16 +12,12 @@ struct LobbyContainerView: View {
                 scene: lobbyScene,
                 onDiaryTapped: handleDiaryTap,
                 onSettingsTapped: handleSettingsTap,
+                onCharacterTapped: handleCharacterTap,
                 onBackgroundTapped: handleBackgroundTap
             )
             .ignoresSafeArea()
 
             overlayContent
-        }
-        .sheet(isPresented: $showCharacterCreation) {
-            if let idx = pendingSlotIndex {
-                CharacterCreationView(slotIndex: idx, gameManager: gameManager)
-            }
         }
     }
 
@@ -42,6 +37,12 @@ struct LobbyContainerView: View {
                 onSettings: moveToSettings
             )
 
+        case .characterSelection:
+            CharacterSelectionOverlayView(
+                onSelect: chooseCharacter,
+                onBack: moveToSlotsFromCharacterSelection
+            )
+
         case .settings:
             SettingsOverlayView(
                 gameManager: gameManager,
@@ -54,19 +55,39 @@ struct LobbyContainerView: View {
 
     private func moveToTitle() {
         lobbyScene.closeAllDiaries()
+        lobbyScene.resetCharactersToExit()
         lobbyScene.animateCamera(to: .title)
         withAnimation { cameraState = .title }
+        pendingSlotIndex = nil
     }
 
     private func moveToSlots() {
+        lobbyScene.resetCharactersToExit()
         lobbyScene.animateCamera(to: .slotSelection)
         withAnimation(.easeInOut(duration: 1.6)) { cameraState = .slotSelection }
+        pendingSlotIndex = nil
+    }
+
+    private func moveToSlotsFromCharacterSelection() {
+        lobbyScene.resetCharactersToExit()
+        lobbyScene.animateCamera(to: .slotSelection)
+        withAnimation(.easeInOut(duration: 1.6)) { cameraState = .slotSelection }
+        pendingSlotIndex = nil
+    }
+
+    private func moveToCharacterSelection(slotIndex: Int) {
+        pendingSlotIndex = slotIndex
+        lobbyScene.animateCamera(to: .characterSelection)
+        lobbyScene.presentCharactersForSelection(duration: 1.2)
+        withAnimation(.easeInOut(duration: 1.6)) { cameraState = .characterSelection }
     }
 
     private func moveToSettings() {
         lobbyScene.closeAllDiaries()
+        lobbyScene.resetCharactersToExit()
         lobbyScene.animateCamera(to: .settings)
         withAnimation(.easeInOut(duration: 1.6)) { cameraState = .settings }
+        pendingSlotIndex = nil
     }
 
     // MARK: - Tap handlers
@@ -75,34 +96,43 @@ struct LobbyContainerView: View {
         switch cameraState {
         case .title:
             moveToSlots()
-        case .slotSelection, .settings:
+        case .slotSelection, .characterSelection, .settings:
             break
         }
     }
 
     private func handleDiaryTap(_ index: Int) {
         guard cameraState == .slotSelection else {
-            moveToSlots()
+            if cameraState == .title { moveToSlots() }
             return
         }
         handleSlotSelect(index)
     }
 
     private func handleSettingsTap() {
-        guard cameraState != .settings else { return }
+        guard cameraState != .settings, cameraState != .characterSelection else { return }
         moveToSettings()
+    }
+
+    private func handleCharacterTap(_ gender: SaveSlot.CharacterGender) {
+        guard cameraState == .characterSelection else { return }
+        chooseCharacter(gender)
     }
 
     private func handleSlotSelect(_ index: Int) {
         lobbyScene.openDiary(at: index) {
             let slot = self.gameManager.saveSlots[index]
             if slot.isEmpty {
-                self.pendingSlotIndex = index
-                self.showCharacterCreation = true
+                self.moveToCharacterSelection(slotIndex: index)
             } else {
                 self.gameManager.continueGame(slotIndex: index)
             }
         }
+    }
+
+    private func chooseCharacter(_ gender: SaveSlot.CharacterGender) {
+        guard let idx = pendingSlotIndex else { return }
+        gameManager.startNewGame(slotIndex: idx, gender: gender)
     }
 }
 
@@ -215,13 +245,6 @@ struct SlotCardView: View {
     var onSelect: () -> Void
     var onDelete: () -> Void
 
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .short
-        f.timeStyle = .short
-        return f
-    }()
-
     var body: some View {
         Button(action: onSelect) {
             VStack(spacing: 6) {
@@ -235,21 +258,16 @@ struct SlotCardView: View {
                 } else {
                     Text(slot.characterGender?.emoji ?? "")
                         .font(.system(size: 28))
-                    Text(slot.playerName ?? "Explorer")
-                        .font(.system(size: 12, weight: .bold, design: .serif))
+                    Text(slot.displayName)
+                        .font(.system(size: 11, weight: .bold, design: .serif))
                         .foregroundStyle(.white)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.8)
 
                     VStack(spacing: 2) {
                         statRow(icon: "drop.fill", value: "\(slot.waterFound)")
                         statRow(icon: "sun.max.fill", value: "\(slot.oasisFound)")
                         statRow(icon: "checkmark.circle", value: "\(slot.tasksCompleted)")
-                    }
-
-                    if let date = slot.lastUpdated {
-                        Text(Self.dateFormatter.string(from: date))
-                            .font(.system(size: 9))
-                            .foregroundStyle(.white.opacity(0.5))
                     }
 
                     Button(action: onDelete) {
@@ -286,101 +304,60 @@ struct SlotCardView: View {
     }
 }
 
-// MARK: - Character Creation
+// MARK: - Character Selection (in-scene)
 
-struct CharacterCreationView: View {
-    let slotIndex: Int
-    @Bindable var gameManager: GameManager
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var selectedGender: SaveSlot.CharacterGender = .man
-    @State private var playerName: String = ""
+struct CharacterSelectionOverlayView: View {
+    var onSelect: (SaveSlot.CharacterGender) -> Void
+    var onBack: () -> Void
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color(red: 0.15, green: 0.1, blue: 0.05).ignoresSafeArea()
-
-                VStack(spacing: 28) {
-                    Text("Who are you?")
-                        .font(.system(size: 28, weight: .bold, design: .serif))
+        VStack {
+            HStack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.title2)
                         .foregroundStyle(.white)
+                        .padding(12)
+                        .background(.black.opacity(0.4), in: Circle())
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
 
-                    // Gender selection
-                    HStack(spacing: 24) {
-                        ForEach(SaveSlot.CharacterGender.allCases, id: \.self) { gender in
-                            Button {
-                                selectedGender = gender
-                            } label: {
-                                VStack(spacing: 10) {
-                                    Text(gender.emoji)
-                                        .font(.system(size: 56))
-                                    Text(gender.displayName)
-                                        .font(.system(size: 14, weight: .medium, design: .serif))
-                                        .foregroundStyle(.white)
-                                }
-                                .frame(width: 130, height: 130)
+            Spacer()
+
+            VStack(spacing: 16) {
+                Text("Who will you be?")
+                    .font(.system(size: 18, weight: .semibold, design: .serif))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .shadow(color: .black, radius: 4)
+
+                Text("Tap a traveler to begin")
+                    .font(.system(size: 13, design: .serif))
+                    .foregroundStyle(.white.opacity(0.55))
+
+                HStack(spacing: 20) {
+                    ForEach(SaveSlot.CharacterGender.allCases, id: \.self) { gender in
+                        Button {
+                            onSelect(gender)
+                        } label: {
+                            Text(gender.displayName)
+                                .font(.system(size: 15, weight: .semibold, design: .serif))
+                                .foregroundStyle(Color(red: 0.15, green: 0.1, blue: 0.05))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 16)
-                                        .fill(selectedGender == gender
-                                              ? Color(red: 0.8, green: 0.6, blue: 0.2).opacity(0.35)
-                                              : Color.white.opacity(0.07))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 16)
-                                                .stroke(selectedGender == gender
-                                                        ? Color(red: 0.9, green: 0.75, blue: 0.3)
-                                                        : .clear, lineWidth: 2)
-                                        )
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color(red: 0.92, green: 0.75, blue: 0.3))
                                 )
-                            }
-                            .buttonStyle(.plain)
                         }
+                        .buttonStyle(.plain)
                     }
-
-                    // Name input
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Your name (optional)")
-                            .font(.system(size: 13, design: .serif))
-                            .foregroundStyle(.white.opacity(0.6))
-                        TextField("Explorer", text: $playerName)
-                            .font(.system(size: 17, design: .serif))
-                            .foregroundStyle(.white)
-                            .tint(.orange)
-                            .padding(14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(.white.opacity(0.1))
-                            )
-                    }
-                    .padding(.horizontal, 24)
-
-                    // Start button
-                    Button {
-                        gameManager.startNewGame(slotIndex: slotIndex,
-                                                  gender: selectedGender,
-                                                  name: playerName)
-                        dismiss()
-                    } label: {
-                        Text("Begin Journey")
-                            .font(.system(size: 18, weight: .bold, design: .serif))
-                            .foregroundStyle(Color(red: 0.15, green: 0.1, blue: 0.05))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .fill(Color(red: 0.92, green: 0.75, blue: 0.3))
-                            )
-                    }
-                    .padding(.horizontal, 24)
                 }
-                .padding(.top, 32)
+                .padding(.horizontal, 28)
             }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(.white.opacity(0.7))
-                }
-            }
+            .padding(.bottom, 28)
         }
     }
 }

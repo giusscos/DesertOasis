@@ -6,6 +6,7 @@ import UIKit
 enum LobbyCameraState {
     case title
     case slotSelection
+    case characterSelection
     case settings
 }
 
@@ -78,20 +79,20 @@ final class LobbyScene: SCNScene {
     // MARK: - Lighting
 
     private func setupLighting() {
-        // Dim warm ambient for a lantern-lit night feel
+        // Warm ambient so canvas walls stay readable instead of falling to black
         let ambient = SCNLight()
         ambient.type = .ambient
-        ambient.color = UIColor(red: 0.38, green: 0.30, blue: 0.22, alpha: 1)
-        ambient.intensity = 120
+        ambient.color = UIColor(red: 0.42, green: 0.34, blue: 0.26, alpha: 1)
+        ambient.intensity = 180
         let ambientNode = SCNNode()
         ambientNode.light = ambient
         rootNode.addChildNode(ambientNode)
 
-        // Cool moonlight through the open +Z entrance (very subtle rim)
+        // Cool moonlight through the open +Z entrance (rim on backs)
         let fill = SCNLight()
         fill.type = .directional
-        fill.color = UIColor(red: 0.40, green: 0.50, blue: 0.75, alpha: 1)
-        fill.intensity = 35
+        fill.color = UIColor(red: 0.45, green: 0.55, blue: 0.78, alpha: 1)
+        fill.intensity = 55
         let fillNode = SCNNode()
         fillNode.light = fill
         fillNode.eulerAngles = SCNVector3(-Float.pi / 5, Float.pi, 0)
@@ -101,24 +102,58 @@ final class LobbyScene: SCNScene {
         let key = SCNLight()
         key.type = .omni
         key.color = UIColor(red: 1.0, green: 0.68, blue: 0.38, alpha: 1)
-        key.intensity = 160
+        key.intensity = 200
         key.attenuationStartDistance = 0.4
-        key.attenuationEndDistance = 7
+        key.attenuationEndDistance = 8
         let keyNode = SCNNode()
         keyNode.light = key
         keyNode.position = SCNVector3(0, 2.6, 0)
         rootNode.addChildNode(keyNode)
 
-        // Soft floor bounce so faces aren't crushed in shadow
+        // Soft floor bounce
         let bounce = SCNLight()
         bounce.type = .omni
         bounce.color = UIColor(red: 0.80, green: 0.60, blue: 0.40, alpha: 1)
-        bounce.intensity = 45
-        bounce.attenuationEndDistance = 6
+        bounce.intensity = 60
+        bounce.attenuationEndDistance = 7
         let bounceNode = SCNNode()
         bounceNode.light = bounce
         bounceNode.position = SCNVector3(0, 0.35, 0.5)
         rootNode.addChildNode(bounceNode)
+
+        // Rear fill — lights the back canvas wall, bed, and table
+        let rear = SCNLight()
+        rear.type = .omni
+        rear.color = UIColor(red: 1.0, green: 0.72, blue: 0.45, alpha: 1)
+        rear.intensity = 140
+        rear.attenuationStartDistance = 0.5
+        rear.attenuationEndDistance = 7
+        let rearNode = SCNNode()
+        rearNode.light = rear
+        rearNode.position = SCNVector3(0, 2.2, -3.2)
+        rootNode.addChildNode(rearNode)
+
+        // Bed-side wash
+        let bedLight = SCNLight()
+        bedLight.type = .omni
+        bedLight.color = UIColor(red: 1.0, green: 0.65, blue: 0.35, alpha: 1)
+        bedLight.intensity = 70
+        bedLight.attenuationEndDistance = 5
+        let bedLightNode = SCNNode()
+        bedLightNode.light = bedLight
+        bedLightNode.position = SCNVector3(-2.5, 1.6, -1.0)
+        rootNode.addChildNode(bedLightNode)
+
+        // Table-side wash
+        let tableLight = SCNLight()
+        tableLight.type = .omni
+        tableLight.color = UIColor(red: 1.0, green: 0.70, blue: 0.42, alpha: 1)
+        tableLight.intensity = 70
+        tableLight.attenuationEndDistance = 5
+        let tableLightNode = SCNNode()
+        tableLightNode.light = tableLight
+        tableLightNode.position = SCNVector3(2.0, 1.6, -1.0)
+        rootNode.addChildNode(tableLightNode)
     }
 
     // MARK: - Floor
@@ -126,8 +161,9 @@ final class LobbyScene: SCNScene {
     private func setupFloor() {
         // Tent asset is shell-only; add a sand floor so the interior isn't a void
         let floor = SCNNode(geometry: SCNPlane(width: 10, height: 12))
-        floor.geometry?.firstMaterial?.diffuse.contents = UIColor(red: 0.55, green: 0.42, blue: 0.28, alpha: 1)
+        floor.geometry?.firstMaterial?.diffuse.contents = UIColor(red: 0.62, green: 0.48, blue: 0.32, alpha: 1)
         floor.geometry?.firstMaterial?.roughness.contents = 0.95
+        floor.geometry?.firstMaterial?.lightingModel = .physicallyBased
         floor.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
         floor.position = SCNVector3(0, 0.01, 0)
         rootNode.addChildNode(floor)
@@ -217,7 +253,9 @@ final class LobbyScene: SCNScene {
 
     private func setupTable() {
         let table = AssetLoader.loadProp("lobby_table")
-        table.position = SCNVector3(3, 0, -1)
+        table.position = SCNVector3(2.2, 0, -1)
+        // Keep AssetLoader's Z-up correction; yaw 90° only
+        table.eulerAngles.y += Float.pi / -2
         // Name the root so the hit-test walk-up in LobbySceneView finds it
         table.name = "settings_zone"
         table.enumerateHierarchy { node, _ in
@@ -239,54 +277,46 @@ final class LobbyScene: SCNScene {
 
     // MARK: - Characters
 
+    /// Standing at the +Z entrance, facing out (backs toward the back-wall title camera).
+    private let manExitPos   = SCNVector3(-0.55, 0, 3.2)
+    private let womanExitPos = SCNVector3( 0.55, 0, 3.2)
+    /// Yaw 0 = face +Z (out the entrance). Yaw π = face −Z (toward back-wall camera).
+    private let exitFacingYaw: Float = 0
+    private let cameraFacingYaw: Float = .pi
+
     private func setupCharacters() {
-        // Man: walks a patrol loop in the tent's centre aisle
         manNode = AssetLoader.loadCharacter("player_man", actions: ["idle", "walk", "talk", "wave"])
-        manNode.position = SCNVector3(0.6, 0, 0.8)
-        manNode.animationPlayer(forKey: "walk")?.play()
+        manNode.name = "character_man"
+        manNode.position = manExitPos
+        manNode.eulerAngles = SCNVector3(0, exitFacingYaw, 0)
+        manNode.animationPlayer(forKey: "idle")?.play()
         rootNode.addChildNode(manNode)
 
-        // Woman: stands deeper inside and looks around (idle)
-        womanNode = AssetLoader.loadCharacter("player_woman", actions: ["idle", "talk"])
-        womanNode.position = SCNVector3(-0.7, 0, -0.5)
-        womanNode.eulerAngles = SCNVector3(0, Float.pi * 0.15, 0)
+        womanNode = AssetLoader.loadCharacter("player_woman", actions: ["idle", "walk", "talk", "wave"])
+        womanNode.name = "character_woman"
+        womanNode.position = womanExitPos
+        womanNode.eulerAngles = SCNVector3(0, exitFacingYaw, 0)
         womanNode.animationPlayer(forKey: "idle")?.play()
         rootNode.addChildNode(womanNode)
-
-        startCharacterMovement()
     }
 
-    private func startCharacterMovement() {
-        // Man patrols inside the tent (stay within ~|x|<2, z in [-2, 2])
-        let patrol = SCNAction.repeatForever(.sequence([
-            SCNAction.group([
-                .move(to: SCNVector3(1.2, 0, 1.5), duration: 2.5),
-                .rotateTo(x: 0, y: 0.5, z: 0, duration: 0.3)
-            ]),
-            SCNAction.group([
-                .move(to: SCNVector3(0.4, 0, -1.2), duration: 3.0),
-                .rotateTo(x: 0, y: .pi, z: 0, duration: 0.3)
-            ]),
-            SCNAction.group([
-                .move(to: SCNVector3(-1.0, 0, 0.2), duration: 2.5),
-                .rotateTo(x: 0, y: -1.8, z: 0, duration: 0.3)
-            ]),
-            SCNAction.group([
-                .move(to: SCNVector3(0.6, 0, 0.8), duration: 2.2),
-                .rotateTo(x: 0, y: 0.2, z: 0, duration: 0.3)
-            ])
-        ]))
-        manNode.runAction(patrol)
+    /// Turns both characters to face the camera (for character selection).
+    func presentCharactersForSelection(duration: TimeInterval = 1.0) {
+        turnCharacters(toYaw: cameraFacingYaw, duration: duration)
+    }
 
-        // Woman looks left and right
-        let look = SCNAction.repeatForever(.sequence([
-            .rotateTo(x: 0, y: -0.4, z: 0, duration: 2.0),
-            .wait(duration: 1.0),
-            .rotateTo(x: 0, y:  0.4, z: 0, duration: 2.0),
-            .wait(duration: 1.5),
-            .rotateTo(x: 0, y:  0.0, z: 0, duration: 1.5)
-        ]))
-        womanNode.runAction(look)
+    /// Returns both characters to exit pose — backs to the interior camera.
+    func resetCharactersToExit(duration: TimeInterval = 0.8) {
+        turnCharacters(toYaw: exitFacingYaw, duration: duration)
+    }
+
+    private func turnCharacters(toYaw yaw: Float, duration: TimeInterval) {
+        let turn = SCNAction.rotateTo(x: 0, y: CGFloat(yaw), z: 0, duration: duration)
+        turn.timingMode = .easeInEaseOut
+        manNode.removeAllActions()
+        womanNode.removeAllActions()
+        manNode.runAction(turn)
+        womanNode.runAction(turn)
     }
 
     // MARK: - Camera
@@ -326,21 +356,25 @@ final class LobbyScene: SCNScene {
         SCNTransaction.commit()
     }
 
-    // All cameras sit inside the tent shell (≈ 8×10×4 m, entrance at +Z)
-    private var titleCameraPos: SCNVector3 { SCNVector3(0, 1.7, 3.0) }
-    private var titleTargetPos:  SCNVector3 { SCNVector3(0, 1.2, -1.5) }
+    // All cameras sit inside / at the tent shell (≈ 8×10×4 m, entrance at +Z)
+    private var titleCameraPos: SCNVector3 { SCNVector3(0, 1.65, -4.2) }
+    private var titleTargetPos:  SCNVector3 { SCNVector3(0, 1.2, 3.2) }
 
     private func cameraData(for state: LobbyCameraState) -> (SCNVector3, SCNVector3) {
         switch state {
         case .title:
-            // Near the entrance, looking into the living space
-            return (SCNVector3(0, 1.7, 3.0), SCNVector3(0, 1.2, -1.5))
+            // At the back wall looking toward the entrance — bed & table in midground,
+            // travelers ahead with their backs to the camera
+            return (SCNVector3(0, 1.65, -4.2), SCNVector3(0, 1.2, 3.2))
         case .slotSelection:
-            // Frame the bed / diaries on the left
-            return (SCNVector3(-1.5, 1.8, 2.2), SCNVector3(-3, 0.55, -1.0))
+            // From the back-wall side, glide left and in toward the bed / diaries
+            return (SCNVector3(-1.8, 1.55, -2.4), SCNVector3(-3.0, 0.55, -1.0))
+        case .characterSelection:
+            // Close in on the pair from inside; they turn to face the camera
+            return (SCNVector3(0, 1.5, 0.8), SCNVector3(0, 1.25, 3.2))
         case .settings:
-            // Frame the table / instruments on the right
-            return (SCNVector3(1.5, 1.8, 2.2), SCNVector3(3, 0.85, -1.0))
+            // From the back-wall side, glide right and in toward the table / instruments
+            return (SCNVector3(1.4, 1.55, -2.4), SCNVector3(2.2, 0.85, -1.0))
         }
     }
 

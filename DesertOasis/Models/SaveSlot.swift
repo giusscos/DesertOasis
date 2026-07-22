@@ -14,6 +14,13 @@ struct SaveSlot: Codable, Identifiable {
 
     var isEmpty: Bool { characterGender == nil }
 
+    /// Slot label — prefers the stored timestamp name, else formats `lastUpdated`.
+    var displayName: String {
+        if let playerName, !playerName.isEmpty { return playerName }
+        if let lastUpdated { return Self.timestampName(from: lastUpdated) }
+        return "Save \(id + 1)"
+    }
+
     init(id: Int) {
         self.id = id
         characterGender = nil
@@ -26,6 +33,17 @@ struct SaveSlot: Codable, Identifiable {
         playerPositionX = 0
         playerPositionZ = 0
     }
+
+    static func timestampName(from date: Date) -> String {
+        Self.nameFormatter.string(from: date)
+    }
+
+    private static let nameFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        return f
+    }()
 
     enum CharacterGender: String, Codable, CaseIterable {
         case man, woman

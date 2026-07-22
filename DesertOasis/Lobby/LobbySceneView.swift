@@ -5,6 +5,7 @@ struct LobbySceneView: UIViewRepresentable {
     let scene: LobbyScene
     var onDiaryTapped: (Int) -> Void
     var onSettingsTapped: () -> Void
+    var onCharacterTapped: (SaveSlot.CharacterGender) -> Void
     var onBackgroundTapped: () -> Void
 
     func makeUIView(context: Context) -> SCNView {
@@ -24,8 +25,9 @@ struct LobbySceneView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: SCNView, context: Context) {
-        context.coordinator.onDiaryTapped     = onDiaryTapped
-        context.coordinator.onSettingsTapped  = onSettingsTapped
+        context.coordinator.onDiaryTapped      = onDiaryTapped
+        context.coordinator.onSettingsTapped   = onSettingsTapped
+        context.coordinator.onCharacterTapped  = onCharacterTapped
         context.coordinator.onBackgroundTapped = onBackgroundTapped
     }
 
@@ -33,6 +35,7 @@ struct LobbySceneView: UIViewRepresentable {
         Coordinator(scene: scene,
                     onDiaryTapped: onDiaryTapped,
                     onSettingsTapped: onSettingsTapped,
+                    onCharacterTapped: onCharacterTapped,
                     onBackgroundTapped: onBackgroundTapped)
     }
 
@@ -42,15 +45,18 @@ struct LobbySceneView: UIViewRepresentable {
         let scene: LobbyScene
         var onDiaryTapped: (Int) -> Void
         var onSettingsTapped: () -> Void
+        var onCharacterTapped: (SaveSlot.CharacterGender) -> Void
         var onBackgroundTapped: () -> Void
 
         init(scene: LobbyScene,
              onDiaryTapped: @escaping (Int) -> Void,
              onSettingsTapped: @escaping () -> Void,
+             onCharacterTapped: @escaping (SaveSlot.CharacterGender) -> Void,
              onBackgroundTapped: @escaping () -> Void) {
             self.scene = scene
             self.onDiaryTapped = onDiaryTapped
             self.onSettingsTapped = onSettingsTapped
+            self.onCharacterTapped = onCharacterTapped
             self.onBackgroundTapped = onBackgroundTapped
         }
 
@@ -77,6 +83,14 @@ struct LobbySceneView: UIViewRepresentable {
                 }
                 if name == "settings_zone" {
                     onSettingsTapped()
+                    return
+                }
+                if name == "character_man" {
+                    onCharacterTapped(.man)
+                    return
+                }
+                if name == "character_woman" {
+                    onCharacterTapped(.woman)
                     return
                 }
                 node = n.parent

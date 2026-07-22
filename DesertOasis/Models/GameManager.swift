@@ -47,11 +47,12 @@ final class GameManager {
 
     // MARK: - Slot actions
 
-    func startNewGame(slotIndex: Int, gender: SaveSlot.CharacterGender, name: String) {
+    func startNewGame(slotIndex: Int, gender: SaveSlot.CharacterGender) {
+        let now = Date()
         saveSlots[slotIndex] = SaveSlot(id: slotIndex)
         saveSlots[slotIndex].characterGender = gender
-        saveSlots[slotIndex].playerName = name.isEmpty ? gender.displayName : name
-        saveSlots[slotIndex].lastUpdated = Date()
+        saveSlots[slotIndex].playerName = SaveSlot.timestampName(from: now)
+        saveSlots[slotIndex].lastUpdated = now
         persistSlots()
         currentScreen = .playing(slotIndex: slotIndex)
     }
