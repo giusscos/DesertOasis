@@ -1,21 +1,24 @@
-//
-//  ContentView.swift
-//  DesertOasis
-//
-//  Created by Giuseppe Cosenza on 30/04/2026.
-//
-
 import SwiftUI
 
 struct ContentView: View {
+    @State private var gameManager = GameManager()
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            switch gameManager.currentScreen {
+            case .playing(let slotIndex):
+                GameView(gameManager: gameManager, slotIndex: slotIndex)
+                    .ignoresSafeArea()
+            default:
+                LobbyContainerView(gameManager: gameManager)
+            }
         }
-        .padding()
+        .animation(.easeInOut(duration: 0.6), value: isInGame)
+    }
+
+    private var isInGame: Bool {
+        if case .playing = gameManager.currentScreen { return true }
+        return false
     }
 }
 
