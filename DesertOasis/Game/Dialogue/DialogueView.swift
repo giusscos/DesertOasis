@@ -110,9 +110,8 @@ struct DialogueView: View {
         if manager.modelAvailable {
             manager.sendMessageStreaming(text)
         } else {
-            // Fallback preset
             manager.messages.append(DialogueMessage(role: .player, text: text))
-            let reply = manager.activeNPC?.personality.greeting ?? "..."
+            let reply = manager.presetReply(to: text)
             manager.messages.append(DialogueMessage(role: .npc, text: reply))
         }
     }

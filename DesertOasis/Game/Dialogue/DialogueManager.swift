@@ -14,6 +14,15 @@ final class DialogueManager {
 
     private var session: LanguageModelSession?
     private let model = SystemLanguageModel.default
+    private var situation = CampSituation(
+        campWaterLevel: 0,
+        waterDeliveries: 0,
+        oasisFound: 0,
+        isCarryingWater: false,
+        hasCompass: false,
+        hasDetector: false,
+        playerName: nil
+    )
 
     init() {
         modelAvailable = model.availability == .available
@@ -21,15 +30,17 @@ final class DialogueManager {
 
     // MARK: - Start conversation
 
-    func startConversation(with npc: NPCNode) {
+    func startConversation(with npc: NPCNode, situation: CampSituation) {
         activeNPC = npc
+        self.situation = situation
         messages = []
         isVisible = true
         isThinking = false
 
-        session = LanguageModelSession(instructions: npc.personality.systemInstructions)
+        npc.setConversing(true)
+        session = LanguageModelSession(instructions: npc.personality.systemInstructions(situation: situation))
 
-        let greeting = DialogueMessage(role: .npc, text: npc.personality.greeting)
+        let greeting = DialogueMessage(role: .npc, text: npc.personality.greeting(for: situation))
         messages.append(greeting)
         npc.hideIndicator()
         npc.playTalkAnimation()
@@ -37,6 +48,7 @@ final class DialogueManager {
 
     func endConversation() {
         activeNPC?.stopTalkAnimation()
+        activeNPC?.setConversing(false)
         activeNPC?.showIndicator()
         isVisible = false
         activeNPC = nil
@@ -58,7 +70,7 @@ final class DialogueManager {
                 let response = try await session.respond(to: text)
                 messages.append(DialogueMessage(role: .npc, text: response.content))
             } catch {
-                let fallback = fallbackResponse(for: error)
+                let fallback = fallbackResponse(for: error, playerText: text)
                 messages.append(DialogueMessage(role: .npc, text: fallback))
             }
             isThinking = false
@@ -86,17 +98,29 @@ final class DialogueManager {
                     messages[messages.count - 1] = DialogueMessage(role: .npc, text: accumulated)
                 }
             } catch {
-                messages[messages.count - 1] = DialogueMessage(role: .npc, text: fallbackResponse(for: error))
+                messages[messages.count - 1] = DialogueMessage(
+                    role: .npc,
+                    text: fallbackResponse(for: error, playerText: text)
+                )
             }
             isThinking = false
         }
     }
 
+    /// Preset reply when Apple Intelligence is unavailable.
+    func presetReply(to text: String) -> String {
+        guard let npc = activeNPC else { return "..." }
+        return npc.personality.fallbackReply(to: text, situation: situation)
+    }
+
     // MARK: - Fallback
 
-    private func fallbackResponse(for error: Error) -> String {
+    private func fallbackResponse(for error: Error, playerText: String) -> String {
         if case LanguageModelSession.GenerationError.unsupportedLanguageOrLocale = error {
             return "I can only speak in supported languages..."
+        }
+        if let npc = activeNPC {
+            return npc.personality.fallbackReply(to: playerText, situation: situation)
         }
         return "The desert wind swallows my words... try again."
     }

@@ -5,22 +5,18 @@ final class PlayerNode: SCNNode {
 
     private var characterNode: SCNNode!
     private var isWalking = false
-
-    // MARK: - Init
+    private(set) var isAirborne = false
 
     init(gender: SaveSlot.CharacterGender) {
         super.init()
         name = "player"
-        let modelName = gender == .man ? "player_man" : "player_woman"
-        characterNode = AssetLoader.loadCharacter(modelName, actions: ["idle", "walk", "talk", "wave"])
+        characterNode = VoxelCharacterBuilder.player(gender: gender)
         addChildNode(characterNode)
-        characterNode.animationPlayer(forKey: "idle")?.play()
+        VoxelAnim.playIdle(on: characterNode)
         setupCollider()
     }
 
     required init?(coder: NSCoder) { nil }
-
-    // MARK: - Physics
 
     private func setupCollider() {
         let shape = SCNPhysicsShape(geometry: SCNCapsule(capRadius: 0.3, height: 1.2), options: nil)
@@ -29,33 +25,49 @@ final class PlayerNode: SCNNode {
         physicsBody?.contactTestBitMask = PhysicsCategory.npc | PhysicsCategory.item
     }
 
-    // MARK: - Animation control
-
     func setWalking(_ walking: Bool) {
+        guard !isAirborne else {
+            isWalking = walking
+            return
+        }
         guard walking != isWalking else { return }
         isWalking = walking
         if walking {
-            characterNode.animationPlayer(forKey: "idle")?.stop()
-            characterNode.animationPlayer(forKey: "walk")?.play()
+            VoxelAnim.playWalk(on: characterNode)
         } else {
-            characterNode.animationPlayer(forKey: "walk")?.stop()
-            characterNode.animationPlayer(forKey: "idle")?.play()
+            VoxelAnim.playIdle(on: characterNode)
+        }
+    }
+
+    func playJumpAnimation() {
+        isAirborne = true
+        VoxelAnim.playJump(on: characterNode)
+    }
+
+    func landFromJump() {
+        guard isAirborne else { return }
+        isAirborne = false
+        if isWalking {
+            VoxelAnim.playWalk(on: characterNode)
+        } else {
+            VoxelAnim.playIdle(on: characterNode)
         }
     }
 
     func playTalkAnimation() {
-        characterNode.animationPlayer(forKey: "walk")?.stop()
-        characterNode.animationPlayer(forKey: "idle")?.stop()
-        characterNode.animationPlayer(forKey: "talk")?.play()
+        VoxelAnim.playTalk(on: characterNode)
     }
 
     func stopTalkAnimation() {
-        characterNode.animationPlayer(forKey: "talk")?.stop()
-        characterNode.animationPlayer(forKey: isWalking ? "walk" : "idle")?.play()
+        if isAirborne {
+            VoxelAnim.playJump(on: characterNode)
+        } else if isWalking {
+            VoxelAnim.playWalk(on: characterNode)
+        } else {
+            VoxelAnim.playIdle(on: characterNode)
+        }
     }
 }
-
-// MARK: - Physics categories
 
 enum PhysicsCategory {
     static let player: Int = 1 << 0

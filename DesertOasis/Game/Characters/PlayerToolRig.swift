@@ -1,8 +1,7 @@
 import SceneKit
 import UIKit
 
-/// Procedural placeholder tools until USDZ assets arrive.
-/// Attached under the player; visibility / needle driven by DesertScene.
+/// Tools built as MagicaVoxel-style unit-cube sculptures.
 final class PlayerToolRig: SCNNode {
 
     private(set) var bucketNode: SCNNode!
@@ -17,6 +16,8 @@ final class PlayerToolRig: SCNNode {
     private(set) var hasCompass = false
     private(set) var hasDetector = false
 
+    private static var uf: Float { VoxelMetrics.unit }
+
     override init() {
         super.init()
         name = "tool_rig"
@@ -30,12 +31,9 @@ final class PlayerToolRig: SCNNode {
 
     required init?(coder: NSCoder) { nil }
 
-    // MARK: - State
-
     func setCarryingWater(_ carrying: Bool) {
         isCarryingWater = carrying
         bucketWater.isHidden = !carrying
-        // Tint bucket bands when full
         if let band = bucketNode.childNode(withName: "bucket_band", recursively: true) {
             band.geometry?.firstMaterial?.diffuse.contents =
                 carrying
@@ -54,15 +52,12 @@ final class PlayerToolRig: SCNNode {
         detectorNode.isHidden = !unlocked
     }
 
-    /// Point compass needle toward a world-space XZ direction (normalized).
     func updateCompass(playerYaw: Float, directionXZ: SIMD2<Float>) {
         guard hasCompass, simd_length(directionXZ) > 0.001 else { return }
         let worldBearing = atan2(directionXZ.x, directionXZ.y)
-        // Needle is in player space; cancel player yaw so it stays world-aligned
         compassNeedle.eulerAngles.y = worldBearing - playerYaw
     }
 
-    /// Signal 0…1 drives gauge angle and lamp pulse.
     func updateDetector(signal: Float, time: Float) {
         guard hasDetector else { return }
         let s = max(0, min(1, signal))
@@ -71,48 +66,58 @@ final class PlayerToolRig: SCNNode {
         detectorLamp.geometry?.firstMaterial?.emission.intensity = CGFloat(pulse)
     }
 
-    // MARK: - Build
-
     private func buildBucket() {
         bucketNode = SCNNode()
         bucketNode.name = "prop_bucket"
-        // Right-hand side, hip height
-        bucketNode.position = SCNVector3(0.38, 0.55, 0.05)
+        // Slung on the player's back (+Z is forward)
+        bucketNode.position = SCNVector3(0, 0.92, -0.34)
+        bucketNode.eulerAngles.x = 0.18
 
-        let body = SCNNode(geometry: SCNCylinder(radius: 0.12, height: 0.28))
-        let wood = SCNMaterial()
-        wood.diffuse.contents = UIColor(red: 0.50, green: 0.36, blue: 0.20, alpha: 1)
-        wood.lightingModel = .lambert
-        body.geometry?.firstMaterial = wood
-        body.position.y = 0.14
-        bucketNode.addChildNode(body)
+        let u = Self.uf
+        let s = VoxelSculpture(sizeX: 8, sizeY: 8, sizeZ: 8,
+                               origin: SIMD3<Float>(-4, 0, -4) * u)
+        s.fillTube(c0: 4, c1: 4, a0: 1, a1: 6, outerR: 3.2, innerR: 2.2, type: .wood)
+        s.fillCylinder(c0: 4, c1: 4, a0: 0, a1: 1, radius: 3.0, type: .wood)
+        // Rim
+        s.fillTube(c0: 4, c1: 4, a0: 6, a1: 7, outerR: 3.4, innerR: 2.2, type: .darkWood)
+        bucketNode.addChildNode(s.makeNode(name: "bucket_body"))
 
-        let band = SCNNode(geometry: SCNCylinder(radius: 0.125, height: 0.03))
-        band.name = "bucket_band"
-        band.geometry?.firstMaterial = {
-            let m = SCNMaterial()
-            m.diffuse.contents = UIColor(white: 0.3, alpha: 1)
-            return m
-        }()
-        band.position.y = 0.1
+        let bandS = VoxelSculpture(sizeX: 8, sizeY: 2, sizeZ: 8,
+                                   origin: SIMD3<Float>(-4, 0, -4) * u)
+        bandS.fillTube(c0: 4, c1: 4, a0: 0, a1: 1, outerR: 3.5, innerR: 3.0, type: .iron)
+        let band = bandS.makeNode(name: "bucket_band")
+        band.position.y = 0.18
         bucketNode.addChildNode(band)
 
-        // Handle arch
-        let handle = SCNNode(geometry: SCNTorus(ringRadius: 0.14, pipeRadius: 0.012))
-        handle.geometry?.firstMaterial = wood
-        handle.eulerAngles.x = Float.pi / 2
-        handle.position.y = 0.30
-        handle.name = "handle"
+        let handleS = VoxelSculpture(sizeX: 8, sizeY: 5, sizeZ: 2,
+                                     origin: SIMD3<Float>(-4, 0, -1) * u)
+        for x in 0..<8 {
+            let y = Int(4.0 * sin(Float(x) / 7.0 * Float.pi))
+            handleS.set(x, y, 0, .darkWood)
+            handleS.set(x, max(0, y - 1), 0, .darkWood)
+        }
+        let handle = handleS.makeNode(name: "handle")
+        handle.position.y = 0.38
         bucketNode.addChildNode(handle)
 
-        bucketWater = SCNNode(geometry: SCNCylinder(radius: 0.10, height: 0.18))
-        let wMat = SCNMaterial()
-        wMat.diffuse.contents = UIColor(red: 0.22, green: 0.55, blue: 0.78, alpha: 0.9)
-        wMat.transparency = 0.9
-        wMat.lightingModel = .constant
-        bucketWater.geometry?.firstMaterial = wMat
-        bucketWater.name = "water_fill"
-        bucketWater.position.y = 0.12
+        // Shoulder straps so the bucket reads as carried on the back
+        let strapS = VoxelSculpture(sizeX: 10, sizeY: 8, sizeZ: 2,
+                                    origin: SIMD3<Float>(-5, 0, -1) * u)
+        for y in 0..<8 {
+            strapS.set(1, y, 0, .darkWood)
+            strapS.set(2, y, 0, .darkWood)
+            strapS.set(7, y, 0, .darkWood)
+            strapS.set(8, y, 0, .darkWood)
+        }
+        let straps = strapS.makeNode(name: "bucket_straps")
+        straps.position = SCNVector3(0, 0.12, 0.12)
+        bucketNode.addChildNode(straps)
+
+        let waterS = VoxelSculpture(sizeX: 6, sizeY: 3, sizeZ: 6,
+                                    origin: SIMD3<Float>(-3, 0, -3) * u)
+        waterS.fillCylinder(c0: 3, c1: 3, a0: 0, a1: 2, radius: 2.4, type: .water)
+        bucketWater = waterS.makeNode(name: "water_fill")
+        bucketWater.position.y = 0.1
         bucketNode.addChildNode(bucketWater)
 
         addChildNode(bucketNode)
@@ -124,35 +129,32 @@ final class PlayerToolRig: SCNNode {
         compassNode.position = SCNVector3(-0.32, 0.85, 0.18)
         compassNode.eulerAngles.x = -0.35
 
-        let body = SCNNode(geometry: SCNCylinder(radius: 0.08, height: 0.03))
-        let brass = SCNMaterial()
-        brass.diffuse.contents = UIColor(red: 0.72, green: 0.55, blue: 0.22, alpha: 1)
-        brass.metalness.contents = 0.7
-        brass.roughness.contents = 0.35
-        body.geometry?.firstMaterial = brass
-        compassNode.addChildNode(body)
+        let u = Self.uf
+        let bodyS = VoxelSculpture(sizeX: 6, sizeY: 2, sizeZ: 6,
+                                   origin: SIMD3<Float>(-3, 0, -3) * u)
+        bodyS.fillCylinder(c0: 3, c1: 3, a0: 0, a1: 1, radius: 2.6, type: .brass)
+        compassNode.addChildNode(bodyS.makeNode(name: "body"))
 
-        let dial = SCNNode(geometry: SCNCylinder(radius: 0.07, height: 0.008))
-        dial.name = "dial"
-        dial.geometry?.firstMaterial = {
-            let m = SCNMaterial()
-            m.diffuse.contents = UIColor(red: 0.90, green: 0.85, blue: 0.70, alpha: 1)
-            return m
-        }()
-        dial.position.y = 0.02
+        let dialS = VoxelSculpture(sizeX: 5, sizeY: 1, sizeZ: 5,
+                                   origin: SIMD3<Float>(-2.5, 0, -2.5) * u)
+        dialS.fillCylinder(c0: 2.5, c1: 2.5, a0: 0, a1: 0, radius: 2.2, type: .canvas)
+        let dial = dialS.makeNode(name: "dial") { _ in
+            UIColor(red: 0.90, green: 0.85, blue: 0.70, alpha: 1)
+        }
+        dial.position.y = 0.04
         compassNode.addChildNode(dial)
 
         compassNeedle = SCNNode()
         compassNeedle.name = "needle"
-        let needleGeom = SCNCone(topRadius: 0, bottomRadius: 0.012, height: 0.11)
-        let needleMat = SCNMaterial()
-        needleMat.diffuse.contents = UIColor(red: 0.75, green: 0.12, blue: 0.10, alpha: 1)
-        needleGeom.firstMaterial = needleMat
-        let needleMesh = SCNNode(geometry: needleGeom)
-        needleMesh.eulerAngles.x = -Float.pi / 2
-        needleMesh.position.z = 0.04
-        compassNeedle.addChildNode(needleMesh)
-        compassNeedle.position.y = 0.03
+        let needleS = VoxelSculpture(sizeX: 1, sizeY: 1, sizeZ: 4,
+                                     origin: SIMD3<Float>(-0.5, 0, 0) * u)
+        needleS.fillBox(x0: 0, y0: 0, z0: 0, x1: 0, y1: 0, z1: 3, type: .iron)
+        let needle = needleS.makeNode(name: "needle_mesh") { _ in
+            UIColor(red: 0.75, green: 0.12, blue: 0.10, alpha: 1)
+        }
+        needle.position.z = 0.02
+        compassNeedle.addChildNode(needle)
+        compassNeedle.position.y = 0.05
         compassNode.addChildNode(compassNeedle)
 
         addChildNode(compassNode)
@@ -164,55 +166,41 @@ final class PlayerToolRig: SCNNode {
         detectorNode.position = SCNVector3(0.42, 0.95, -0.05)
         detectorNode.eulerAngles.z = -0.4
 
-        let grip = SCNNode(geometry: SCNCylinder(radius: 0.025, height: 0.22))
-        grip.geometry?.firstMaterial = {
-            let m = SCNMaterial()
-            m.diffuse.contents = UIColor(red: 0.40, green: 0.28, blue: 0.15, alpha: 1)
-            return m
-        }()
-        grip.position.y = 0.05
+        let u = Self.uf
+        let gripS = VoxelSculpture(sizeX: 3, sizeY: 6, sizeZ: 3,
+                                   origin: SIMD3<Float>(-1.5, 0, -1.5) * u)
+        gripS.fillCylinder(c0: 1.5, c1: 1.5, a0: 0, a1: 5, radius: 1.1, type: .darkWood)
+        let grip = gripS.makeNode(name: "grip")
+        grip.position.y = 0.02
         detectorNode.addChildNode(grip)
 
-        let dish = SCNNode(geometry: SCNCone(topRadius: 0.02, bottomRadius: 0.09, height: 0.08))
-        dish.name = "dish"
-        dish.geometry?.firstMaterial = {
-            let m = SCNMaterial()
-            m.diffuse.contents = UIColor(red: 0.65, green: 0.48, blue: 0.20, alpha: 1)
-            m.metalness.contents = 0.5
-            return m
-        }()
-        dish.eulerAngles.x = Float.pi / 2
-        dish.position = SCNVector3(0, 0.22, 0.06)
+        let dishS = VoxelSculpture(sizeX: 6, sizeY: 2, sizeZ: 6,
+                                   origin: SIMD3<Float>(-3, 0, -3) * u)
+        dishS.fillCylinder(c0: 3, c1: 3, a0: 0, a1: 1, radius: 2.6, type: .brass)
+        let dish = dishS.makeNode(name: "dish")
+        dish.position = SCNVector3(0, 0.22, 0.04)
         detectorNode.addChildNode(dish)
-
-        // Gauge housing
-        let gaugeBody = SCNNode(geometry: SCNCylinder(radius: 0.04, height: 0.02))
-        gaugeBody.geometry?.firstMaterial = grip.geometry?.firstMaterial
-        gaugeBody.eulerAngles.x = Float.pi / 2
-        gaugeBody.position = SCNVector3(0, 0.12, 0.05)
-        detectorNode.addChildNode(gaugeBody)
 
         detectorGauge = SCNNode()
         detectorGauge.name = "gauge_needle"
-        let gNeedle = SCNNode(geometry: SCNBox(width: 0.008, height: 0.035, length: 0.004, chamferRadius: 0))
-        gNeedle.geometry?.firstMaterial = {
-            let m = SCNMaterial()
-            m.diffuse.contents = UIColor.red
-            return m
-        }()
-        gNeedle.position.y = 0.015
+        let gS = VoxelSculpture(sizeX: 1, sizeY: 3, sizeZ: 1,
+                                origin: SIMD3<Float>(-0.5, 0, -0.5) * u)
+        gS.fillBox(x0: 0, y0: 0, z0: 0, x1: 0, y1: 2, z1: 0, type: .iron)
+        let gNeedle = gS.makeNode(name: "g_mesh") { _ in UIColor.red }
+        gNeedle.position.y = 0.02
         detectorGauge.addChildNode(gNeedle)
         detectorGauge.position = SCNVector3(0, 0.12, 0.06)
         detectorNode.addChildNode(detectorGauge)
 
-        detectorLamp = SCNNode(geometry: SCNSphere(radius: 0.02))
-        detectorLamp.name = "lamp"
-        let lampMat = SCNMaterial()
-        lampMat.diffuse.contents = UIColor(red: 1.0, green: 0.7, blue: 0.2, alpha: 1)
-        lampMat.emission.contents = UIColor(red: 1.0, green: 0.65, blue: 0.15, alpha: 1)
-        lampMat.emission.intensity = 0.25
-        lampMat.lightingModel = .constant
-        detectorLamp.geometry?.firstMaterial = lampMat
+        let lampS = VoxelSculpture(sizeX: 2, sizeY: 2, sizeZ: 2,
+                                   origin: SIMD3<Float>(-1, 0, -1) * u)
+        lampS.fillSphere(cx: 1, cy: 1, cz: 1, r: 0.9, type: .brass)
+        detectorLamp = lampS.makeNode(name: "lamp") { _ in
+            UIColor(red: 1.0, green: 0.7, blue: 0.2, alpha: 1)
+        }
+        detectorLamp.geometry?.firstMaterial?.emission.contents = UIColor(red: 1.0, green: 0.65, blue: 0.15, alpha: 1)
+        detectorLamp.geometry?.firstMaterial?.emission.intensity = 0.25
+        detectorLamp.geometry?.firstMaterial?.lightingModel = .constant
         detectorLamp.position = SCNVector3(0, 0.18, 0.02)
         detectorNode.addChildNode(detectorLamp)
 

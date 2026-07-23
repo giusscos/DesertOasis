@@ -8,14 +8,17 @@ struct GameView: View {
     @State private var desertScene = DesertScene()
     @State private var dialogueManager = DialogueManager()
     @State private var joystickOffset: CGSize = .zero
-    @State private var lastCameraTranslation: CGFloat = 0
+    @State private var lastCameraTranslation: CGSize = .zero
     @State private var nearbyNPCPrompt: NPCNode? = nil
     @State private var toastMessage: String? = nil
     @State private var oasisFoundSet: Set<String> = []
     @State private var sceneBuilt = false
+    @State private var isLoadingWorld = true
+    @State private var loadProgress: Float = 0
     @State private var showDeliverPrompt = false
     @State private var carryingWater = false
     @State private var campWaterLevel: Float = 0
+    @State private var isRunningHeld = false
 
     var slot: SaveSlot { gameManager.saveSlots[slotIndex] }
 
@@ -25,9 +28,16 @@ struct GameView: View {
             GameSceneView(scene: desertScene)
                 .ignoresSafeArea()
                 .gesture(cameraDragGesture)
+                .allowsHitTesting(!isLoadingWorld)
+
+            if isLoadingWorld {
+                WorldLoadingOverlay(progress: loadProgress)
+                    .transition(.opacity)
+                    .zIndex(10)
+            }
 
             // Dialogue panel
-            if dialogueManager.isVisible {
+            if !isLoadingWorld, dialogueManager.isVisible {
                 VStack {
                     Spacer()
                     DialogueView(manager: dialogueManager)
@@ -39,11 +49,22 @@ struct GameView: View {
             }
 
             // NPC tap-to-talk prompt
-            if let npc = nearbyNPCPrompt, !dialogueManager.isVisible {
+            if !isLoadingWorld, let npc = nearbyNPCPrompt, !dialogueManager.isVisible {
                 VStack {
                     Spacer()
                     Button {
-                        dialogueManager.startConversation(with: npc)
+                        dialogueManager.startConversation(
+                            with: npc,
+                            situation: CampSituation(
+                                campWaterLevel: campWaterLevel,
+                                waterDeliveries: slot.waterDeliveries,
+                                oasisFound: slot.oasisFound,
+                                isCarryingWater: carryingWater,
+                                hasCompass: slot.hasWaterCompass,
+                                hasDetector: slot.hasWaterDetector,
+                                playerName: slot.playerName
+                            )
+                        )
                         nearbyNPCPrompt = nil
                     } label: {
                         HStack(spacing: 8) {
@@ -64,7 +85,7 @@ struct GameView: View {
             }
 
             // Deliver water prompt
-            if showDeliverPrompt, !dialogueManager.isVisible, nearbyNPCPrompt == nil {
+            if !isLoadingWorld, showDeliverPrompt, !dialogueManager.isVisible, nearbyNPCPrompt == nil {
                 VStack {
                     Spacer()
                     Button {
@@ -104,62 +125,82 @@ struct GameView: View {
                 .animation(.easeOut(duration: 0.5), value: toastMessage != nil)
             }
 
-            // HUD
-            VStack {
-                HStack(alignment: .top) {
-                    Button {
-                        gameManager.currentScreen = .slotSelection
-                    } label: {
-                        Image(systemName: "house.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white)
-                            .padding(12)
-                            .background(.black.opacity(0.4), in: Circle())
+            // HUD (hidden while chatting / loading)
+            if !isLoadingWorld, !dialogueManager.isVisible {
+                VStack {
+                    HStack(alignment: .top) {
+                        Button {
+                            gameManager.currentScreen = .slotSelection
+                        } label: {
+                            Image(systemName: "house.fill")
+                                .font(.title2)
+                                .foregroundStyle(.white)
+                                .padding(12)
+                                .background(.black.opacity(0.4), in: Circle())
+                        }
+
+                        Spacer()
+
+                        VStack(alignment: .trailing, spacing: 8) {
+                            campWaterBar
+
+                            HStack(spacing: 10) {
+                                if carryingWater {
+                                    Label("Full bucket", systemImage: "drop.fill")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.blue.opacity(0.55), in: Capsule())
+                                }
+                                if slot.hasWaterCompass {
+                                    Image(systemName: "location.north.circle.fill")
+                                        .foregroundStyle(.yellow)
+                                }
+                                if slot.hasWaterDetector {
+                                    Image(systemName: "antenna.radiowaves.left.and.right")
+                                        .foregroundStyle(.orange)
+                                }
+                                statBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
+                                statBadge(icon: "checkmark.circle.fill", value: slot.waterDeliveries, color: .green)
+                            }
+                        }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
 
                     Spacer()
 
-                    VStack(alignment: .trailing, spacing: 8) {
-                        campWaterBar
-
-                        HStack(spacing: 10) {
-                            if carryingWater {
-                                Label("Full bucket", systemImage: "drop.fill")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(Color.blue.opacity(0.55), in: Capsule())
-                            }
-                            if slot.hasWaterCompass {
-                                Image(systemName: "location.north.circle.fill")
-                                    .foregroundStyle(.yellow)
-                            }
-                            if slot.hasWaterDetector {
-                                Image(systemName: "antenna.radiowaves.left.and.right")
-                                    .foregroundStyle(.orange)
-                            }
-                            statBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
-                            statBadge(icon: "checkmark.circle.fill", value: slot.waterDeliveries, color: .green)
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-
-                Spacer()
-
-                if !dialogueManager.isVisible {
-                    HStack {
+                    HStack(alignment: .bottom) {
                         JoystickView(offset: $joystickOffset) { dx, dy in
                             desertScene.setMoveInput(dx: dx, dy: dy)
                             savePositionDebounced()
                         }
                         .padding(.leading, 28)
                         .padding(.bottom, 16)
+
                         Spacer()
+
+                        VStack(spacing: 14) {
+                            HoldActionButton(
+                                systemName: "figure.run",
+                                isActive: isRunningHeld,
+                                activeColor: Color(red: 0.95, green: 0.55, blue: 0.15)
+                            ) { held in
+                                isRunningHeld = held
+                                desertScene.setRunning(held)
+                            }
+
+                            TapActionButton(systemName: "arrow.up") {
+                                desertScene.jump()
+                            }
+                        }
+                        .padding(.trailing, 28)
+                        .padding(.bottom, 28)
                     }
                 }
+                .transition(.opacity)
+                .animation(.easeOut(duration: 0.25), value: dialogueManager.isVisible)
             }
         }
         .onAppear {
@@ -167,8 +208,16 @@ struct GameView: View {
             sceneBuilt = true
             carryingWater = slot.isCarryingWater
             campWaterLevel = slot.campWaterLevel
+            desertScene.onBuildProgress = { progress in
+                loadProgress = progress
+            }
+            desertScene.onBuildComplete = {
+                withAnimation(.easeOut(duration: 0.45)) {
+                    isLoadingWorld = false
+                }
+                wireCallbacks()
+            }
             desertScene.build(from: slot)
-            wireCallbacks()
         }
     }
 
@@ -281,12 +330,14 @@ struct GameView: View {
     var cameraDragGesture: some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
-                guard !dialogueManager.isVisible else { return }
-                let delta = Float(value.translation.width - lastCameraTranslation) * 0.005
-                desertScene.rotateCamera(by: delta)
-                lastCameraTranslation = value.translation.width
+                guard !isLoadingWorld, !dialogueManager.isVisible else { return }
+                let dx = Float(value.translation.width - lastCameraTranslation.width) * 0.005
+                let dy = Float(value.translation.height - lastCameraTranslation.height) * 0.004
+                // Drag right → yaw; drag up → look up (pitch increases)
+                desertScene.rotateCamera(yawDelta: dx, pitchDelta: -dy)
+                lastCameraTranslation = value.translation
             }
-            .onEnded { _ in lastCameraTranslation = 0 }
+            .onEnded { _ in lastCameraTranslation = .zero }
     }
 
     // MARK: - Save debounce
@@ -305,6 +356,114 @@ struct GameView: View {
                                            posZ: p.map { $0.z })
             }
         }
+    }
+}
+
+// MARK: - World loading overlay
+
+struct WorldLoadingOverlay: View {
+    let progress: Float
+    @State private var pulse = false
+    @State private var cubePhase: Double = 0
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.10, green: 0.14, blue: 0.22).opacity(0.55),
+                    Color(red: 0.18, green: 0.12, blue: 0.06).opacity(0.72),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 22) {
+                Spacer()
+
+                HStack(spacing: 10) {
+                    ForEach(0..<5, id: \.self) { i in
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(cubeColor(for: i))
+                            .frame(width: 16, height: 16)
+                            .offset(y: bounceOffset(for: i))
+                            .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                    }
+                }
+                .padding(.bottom, 4)
+
+                Text("Shaping the desert")
+                    .font(.system(size: 26, weight: .bold, design: .serif))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.55), radius: 6)
+
+                Text(statusText)
+                    .font(.system(size: 14, weight: .medium, design: .serif))
+                    .foregroundStyle(.white.opacity(0.75))
+
+                VStack(spacing: 8) {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(.white.opacity(0.18))
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.92, green: 0.72, blue: 0.28),
+                                            Color(red: 0.95, green: 0.55, blue: 0.18),
+                                        ],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(width: max(8, geo.size.width * CGFloat(progress)))
+                        }
+                    }
+                    .frame(height: 10)
+
+                    Text("\(Int((progress * 100).rounded()))%")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+                .frame(maxWidth: 260)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 48)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+            withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                cubePhase = 1
+            }
+        }
+        .allowsHitTesting(true)
+    }
+
+    private var statusText: String {
+        if progress < 0.25 { return "Laying sand beneath your feet…" }
+        if progress < 0.55 { return "Raising dunes from voxels…" }
+        if progress < 0.85 { return "Carving the horizon…" }
+        if progress < 0.98 { return "Pitching camp…" }
+        return "Almost ready…"
+    }
+
+    private func cubeColor(for index: Int) -> Color {
+        let colors: [Color] = [
+            Color(red: 0.90, green: 0.78, blue: 0.45),
+            Color(red: 0.82, green: 0.62, blue: 0.30),
+            Color(red: 0.72, green: 0.52, blue: 0.28),
+            Color(red: 0.55, green: 0.48, blue: 0.38),
+            Color(red: 0.35, green: 0.55, blue: 0.70),
+        ]
+        return colors[index % colors.count].opacity(pulse ? 1 : 0.7)
+    }
+
+    private func bounceOffset(for index: Int) -> CGFloat {
+        let wave = (cubePhase + Double(index) * 0.18).truncatingRemainder(dividingBy: 1)
+        return -10 * sin(wave * .pi)
     }
 }
 
@@ -402,5 +561,52 @@ struct JoystickView: View {
         guard len > radius else { return value }
         let scale = radius / len
         return CGSize(width: value.width * scale, height: value.height * scale)
+    }
+}
+
+// MARK: - Action buttons
+
+struct TapActionButton: View {
+    let systemName: String
+    var onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: systemName)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 64, height: 64)
+                .background(.black.opacity(0.38), in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.28), lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct HoldActionButton: View {
+    let systemName: String
+    var isActive: Bool
+    var activeColor: Color = .orange
+    var onHoldChanged: (Bool) -> Void
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 22, weight: .bold))
+            .foregroundStyle(isActive ? .white : .white.opacity(0.9))
+            .frame(width: 64, height: 64)
+            .background(
+                (isActive ? activeColor.opacity(0.75) : Color.black.opacity(0.38)),
+                in: Circle()
+            )
+            .overlay(Circle().stroke(.white.opacity(isActive ? 0.55 : 0.28), lineWidth: 1.5))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !isActive { onHoldChanged(true) }
+                    }
+                    .onEnded { _ in
+                        onHoldChanged(false)
+                    }
+            )
     }
 }
