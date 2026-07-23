@@ -367,6 +367,8 @@ struct CharacterSelectionOverlayView: View {
 struct SettingsOverlayView: View {
     @Bindable var gameManager: GameManager
     var onBack: () -> Void
+    /// When set (game view only), shows a button to leave the run and return to the title screen.
+    var onReturnToMainScreen: (() -> Void)? = nil
 
     var body: some View {
         VStack {
@@ -396,6 +398,29 @@ struct SettingsOverlayView: View {
                     settingRow(title: "Sound Effects", icon: "speaker.wave.2", isOn: $gameManager.soundEnabled)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                if let onReturnToMainScreen {
+                    Button(action: onReturnToMainScreen) {
+                        HStack {
+                            Image(systemName: "house")
+                                .frame(width: 24)
+                                .foregroundStyle(.orange)
+                            Text("Back to Main Screen")
+                                .font(.system(size: 16, design: .serif))
+                                .foregroundStyle(.white)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.35))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .background(.black.opacity(0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 12)
+                }
 
                 Text("Desert Oasis  v1.0")
                     .font(.caption2)

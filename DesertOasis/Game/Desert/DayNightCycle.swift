@@ -98,6 +98,7 @@ final class DayNightCycle {
             skyMaterial.diffuse.contents = sample.skyColor
         }
         scene?.background.contents = sample.skyColor
+        scene?.fogColor = sample.fogColor
     }
 
     // MARK: - Palette
@@ -108,6 +109,8 @@ final class DayNightCycle {
         var ambientColor: UIColor
         var ambientIntensity: CGFloat
         var skyColor: UIColor
+        /// Warm sand haze — biased toward sky so the dome still reads as atmosphere when fogged.
+        var fogColor: UIColor
     }
 
     private static func sample(at t: Float) -> Sample {
@@ -118,63 +121,72 @@ final class DayNightCycle {
                 sunIntensity: 80,
                 ambientColor: UIColor(red: 0.18, green: 0.22, blue: 0.38, alpha: 1),
                 ambientIntensity: 90,
-                skyColor: UIColor(red: 0.06, green: 0.08, blue: 0.18, alpha: 1)
+                skyColor: UIColor(red: 0.06, green: 0.08, blue: 0.18, alpha: 1),
+                fogColor: UIColor(red: 0.12, green: 0.11, blue: 0.16, alpha: 1)
             )),
             (0.20, Sample(
                 sunColor: UIColor(red: 0.55, green: 0.45, blue: 0.55, alpha: 1),
                 sunIntensity: 180,
                 ambientColor: UIColor(red: 0.30, green: 0.28, blue: 0.40, alpha: 1),
                 ambientIntensity: 140,
-                skyColor: UIColor(red: 0.18, green: 0.16, blue: 0.28, alpha: 1)
+                skyColor: UIColor(red: 0.18, green: 0.16, blue: 0.28, alpha: 1),
+                fogColor: UIColor(red: 0.28, green: 0.22, blue: 0.26, alpha: 1)
             )),
             (0.26, Sample(
                 sunColor: UIColor(red: 1.0, green: 0.55, blue: 0.30, alpha: 1),
                 sunIntensity: 700,
                 ambientColor: UIColor(red: 0.75, green: 0.45, blue: 0.35, alpha: 1),
                 ambientIntensity: 280,
-                skyColor: UIColor(red: 0.95, green: 0.55, blue: 0.35, alpha: 1)
+                skyColor: UIColor(red: 0.95, green: 0.55, blue: 0.35, alpha: 1),
+                fogColor: UIColor(red: 0.92, green: 0.62, blue: 0.42, alpha: 1)
             )),
             (0.35, Sample(
                 sunColor: UIColor(red: 1.0, green: 0.92, blue: 0.72, alpha: 1),
                 sunIntensity: 1100,
                 ambientColor: UIColor(red: 0.65, green: 0.72, blue: 0.85, alpha: 1),
                 ambientIntensity: 380,
-                skyColor: UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
+                skyColor: UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1),
+                fogColor: UIColor(red: 0.78, green: 0.72, blue: 0.62, alpha: 1)
             )),
             (0.50, Sample(
                 sunColor: UIColor(red: 1.0, green: 0.95, blue: 0.82, alpha: 1),
                 sunIntensity: 1300,
                 ambientColor: UIColor(red: 0.70, green: 0.78, blue: 0.90, alpha: 1),
                 ambientIntensity: 450,
-                skyColor: UIColor(red: 0.48, green: 0.74, blue: 0.96, alpha: 1)
+                skyColor: UIColor(red: 0.48, green: 0.74, blue: 0.96, alpha: 1),
+                fogColor: UIColor(red: 0.82, green: 0.74, blue: 0.58, alpha: 1)
             )),
             (0.68, Sample(
                 sunColor: UIColor(red: 1.0, green: 0.78, blue: 0.45, alpha: 1),
                 sunIntensity: 900,
                 ambientColor: UIColor(red: 0.80, green: 0.55, blue: 0.40, alpha: 1),
                 ambientIntensity: 320,
-                skyColor: UIColor(red: 0.85, green: 0.52, blue: 0.32, alpha: 1)
+                skyColor: UIColor(red: 0.85, green: 0.52, blue: 0.32, alpha: 1),
+                fogColor: UIColor(red: 0.88, green: 0.58, blue: 0.38, alpha: 1)
             )),
             (0.76, Sample(
                 sunColor: UIColor(red: 1.0, green: 0.40, blue: 0.22, alpha: 1),
                 sunIntensity: 450,
                 ambientColor: UIColor(red: 0.55, green: 0.28, blue: 0.28, alpha: 1),
                 ambientIntensity: 200,
-                skyColor: UIColor(red: 0.45, green: 0.18, blue: 0.22, alpha: 1)
+                skyColor: UIColor(red: 0.45, green: 0.18, blue: 0.22, alpha: 1),
+                fogColor: UIColor(red: 0.42, green: 0.22, blue: 0.20, alpha: 1)
             )),
             (0.85, Sample(
                 sunColor: UIColor(red: 0.40, green: 0.42, blue: 0.65, alpha: 1),
                 sunIntensity: 120,
                 ambientColor: UIColor(red: 0.22, green: 0.24, blue: 0.40, alpha: 1),
                 ambientIntensity: 110,
-                skyColor: UIColor(red: 0.10, green: 0.10, blue: 0.22, alpha: 1)
+                skyColor: UIColor(red: 0.10, green: 0.10, blue: 0.22, alpha: 1),
+                fogColor: UIColor(red: 0.14, green: 0.12, blue: 0.18, alpha: 1)
             )),
             (1.00, Sample(
                 sunColor: UIColor(red: 0.35, green: 0.42, blue: 0.70, alpha: 1),
                 sunIntensity: 80,
                 ambientColor: UIColor(red: 0.18, green: 0.22, blue: 0.38, alpha: 1),
                 ambientIntensity: 90,
-                skyColor: UIColor(red: 0.06, green: 0.08, blue: 0.18, alpha: 1)
+                skyColor: UIColor(red: 0.06, green: 0.08, blue: 0.18, alpha: 1),
+                fogColor: UIColor(red: 0.12, green: 0.11, blue: 0.16, alpha: 1)
             )),
         ]
 
@@ -189,7 +201,8 @@ final class DayNightCycle {
             sunIntensity: a.1.sunIntensity + (b.1.sunIntensity - a.1.sunIntensity) * u,
             ambientColor: lerpColor(a.1.ambientColor, b.1.ambientColor, u),
             ambientIntensity: a.1.ambientIntensity + (b.1.ambientIntensity - a.1.ambientIntensity) * u,
-            skyColor: lerpColor(a.1.skyColor, b.1.skyColor, u)
+            skyColor: lerpColor(a.1.skyColor, b.1.skyColor, u),
+            fogColor: lerpColor(a.1.fogColor, b.1.fogColor, u)
         )
     }
 

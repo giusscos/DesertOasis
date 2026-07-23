@@ -161,8 +161,6 @@ final class CampOasisGrowthNode: SCNNode {
     }
 
     private func applyVisual(animated: Bool) {
-        let stageF = Float(stage.rawValue)
-        let blend = stageF + progress
 
         // Wet patch from damp onward
         let wetVisible = stage >= .damp
@@ -203,7 +201,6 @@ final class CampOasisGrowthNode: SCNNode {
             setNode(palm, visible: palmVisible && palmScale > 0.05, scale: max(0.01, palmScale), animated: animated)
         }
 
-        _ = blend
     }
 
     private func setNode(_ node: SCNNode, visible: Bool, scale: Float, animated: Bool) {

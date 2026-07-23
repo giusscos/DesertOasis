@@ -121,6 +121,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
         setupLighting()
         setupSky()
+        setupSandHaze()
         dayNight.attach(scene: self, sun: sunNode, ambient: ambientLightNode, sky: skyNode)
 
         voxelWorld = VoxelWorld(seed: slot.desertSeed)
@@ -309,6 +310,19 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     private func skyboxGradient() -> UIColor {
         UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
+    }
+
+    /// Soft sand haze at the stream rim — hides chunk pop-in without muddying camp scale.
+    private func setupSandHaze() {
+        let chunkMeters = CGFloat(VoxelChunk.sizeX) * CGFloat(VoxelMetrics.blockSize)
+        let loadEdge = chunkMeters * CGFloat(streamLoadRadius)
+        // Clear through camp-discover range; fully opaque just past the loaded ring.
+        fogStartDistance = loadEdge * 0.68
+        fogEndDistance = loadEdge * 1.08
+
+        // SceneKit fogs all geometry; a sky dome would become solid haze when looking up.
+        // `background.contents` (driven by DayNightCycle) stays unfogged.
+        skyNode?.isHidden = true
     }
 
     // MARK: - Player
@@ -1491,15 +1505,6 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     private func checkProximity() {
         guard let playerPos = playerNode?.position else { return }
-
-        for npc in npcs where !npc.task.isCompleted {
-            let dx = npc.position.x - playerPos.x
-            let dz = npc.position.z - playerPos.z
-            let dist = sqrt(dx*dx + dz*dz)
-            if dist < npc.interactionRadius {
-                onNPCProximity?(npc)
-            }
-        }
 
         for oasis in oases {
             let dx = oasis.position.x - playerPos.x

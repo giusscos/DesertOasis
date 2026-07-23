@@ -9,6 +9,7 @@ struct GameView: View {
 
     @State private var desertScene = DesertScene()
     @State private var dialogueManager = DialogueManager()
+    @State private var joystickOffset: CGSize = .zero
     @State private var toastMessage: String? = nil
     @State private var oasisFoundSet: Set<String> = []
     @State private var sceneBuilt = false
@@ -25,6 +26,7 @@ struct GameView: View {
     @State private var lastWaterWarningLevel: Float = 1.0
     @State private var isSleeping = false
     @State private var isPaused = false
+    @State private var isShowingSettings = false
     @State private var timeOfDay: Float = 0.32
     @State private var pressedKeys: Set<GameKey> = []
     @State private var runSources: Set<RunSource> = []
@@ -39,12 +41,21 @@ struct GameView: View {
 
     /// Playing with hidden, confined cursor.
     private var isPointerLockedGameplay: Bool {
-        !isLoadingWorld && !isSleeping && !isPaused && !dialogueManager.isVisible
+        !isLoadingWorld && !isSleeping && !isPaused && !isShowingSettings && !dialogueManager.isVisible
     }
 
     /// Keyboard capture (includes pause so Esc can resume).
     private var acceptsKeyboardInput: Bool {
         !isLoadingWorld && !isSleeping && !dialogueManager.isVisible
+    }
+
+    /// Virtual stick for phones/iPads; Mac uses WASD instead.
+    private var showsOnScreenJoystick: Bool {
+        #if targetEnvironment(macCatalyst)
+        false
+        #else
+        !ProcessInfo.processInfo.isiOSAppOnMac
+        #endif
     }
 
     private enum ActionKind {
@@ -102,7 +113,7 @@ struct GameView: View {
                 onBedTapped: handleBedTap,
                 onSettingsTableTapped: {
                     guard !isSleeping, !isPaused else { return }
-                    showToast("Camp table — rest at the bed to skip the night.")
+                    setShowingSettings(true)
                 },
                 onKeyDown: { handleHardwareKey($0, isDown: true) },
                 onKeyUp: { handleHardwareKey($0, isDown: false) },
@@ -136,6 +147,19 @@ struct GameView: View {
                 )
                 .transition(.opacity)
                 .zIndex(11)
+            }
+
+            if isShowingSettings, !isLoadingWorld, !isSleeping {
+                SettingsOverlayView(
+                    gameManager: gameManager,
+                    onBack: { setShowingSettings(false) },
+                    onReturnToMainScreen: {
+                        setShowingSettings(false)
+                        gameManager.currentScreen = .title
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(12)
             }
 
             // Dialogue panel
@@ -199,8 +223,8 @@ struct GameView: View {
                 .animation(.easeOut(duration: 0.5), value: toastMessage != nil)
             }
 
-            // HUD (hidden while chatting / loading / sleeping / paused)
-            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused {
+            // HUD (hidden while chatting / loading / sleeping / paused / settings)
+            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused, !isShowingSettings {
                 VStack(spacing: 0) {
                     topInfoBar
                         .padding(.horizontal, 12)
@@ -208,7 +232,16 @@ struct GameView: View {
 
                     Spacer()
 
-                    HStack {
+                    HStack(alignment: .bottom) {
+                        if showsOnScreenJoystick {
+                            JoystickView(offset: $joystickOffset) { dx, dy in
+                                desertScene.setMoveInput(dx: dx, dy: dy)
+                                savePositionDebounced()
+                            }
+                            .padding(.leading, 28)
+                            .padding(.bottom, 16)
+                        }
+
                         Spacer()
 
                         VStack(spacing: 14) {
@@ -219,7 +252,7 @@ struct GameView: View {
 
                             HoldActionButton(
                                 systemName: "figure.run",
-                                keyLabel: "⇧",
+                                keyLabel: showsOnScreenJoystick ? nil : "⇧",
                                 isActive: isRunningHeld,
                                 activeColor: Color(red: 0.95, green: 0.55, blue: 0.15)
                             ) { held in
@@ -231,7 +264,10 @@ struct GameView: View {
                                 syncRunning()
                             }
 
-                            TapActionButton(systemName: "arrow.up", keyLabel: "Space") {
+                            TapActionButton(
+                                systemName: "arrow.up",
+                                keyLabel: showsOnScreenJoystick ? nil : "Space"
+                            ) {
                                 desertScene.jump()
                             }
                         }
@@ -260,12 +296,14 @@ struct GameView: View {
             if visible {
                 clearKeyboardMovement()
                 if isPaused { isPaused = false }
+                if isShowingSettings { isShowingSettings = false }
             }
         }
         .onChange(of: isSleeping) { _, sleeping in
             if sleeping {
                 clearKeyboardMovement()
                 isPaused = false
+                isShowingSettings = false
             }
         }
         .onAppear {
@@ -296,6 +334,7 @@ struct GameView: View {
 
     private func setPaused(_ paused: Bool) {
         guard isPaused != paused else { return }
+        if paused { isShowingSettings = false }
         withAnimation(.easeOut(duration: 0.2)) {
             isPaused = paused
         }
@@ -307,9 +346,24 @@ struct GameView: View {
         }
     }
 
+    private func setShowingSettings(_ showing: Bool) {
+        guard isShowingSettings != showing else { return }
+        if showing { isPaused = false }
+        withAnimation(.easeOut(duration: 0.2)) {
+            isShowingSettings = showing
+        }
+        if showing {
+            clearKeyboardMovement()
+            PointerLockBridge.wantsLock = false
+        } else {
+            PointerLockBridge.wantsLock = isPointerLockedGameplay
+        }
+    }
+
     private func clearKeyboardMovement() {
         pressedKeys.removeAll()
         runSources.remove(.shiftOrR)
+        joystickOffset = .zero
         desertScene.setMoveInput(dx: 0, dy: 0)
         syncRunning()
     }
@@ -342,7 +396,11 @@ struct GameView: View {
 
         if key == .escape {
             if isDown {
-                setPaused(!isPaused)
+                if isShowingSettings {
+                    setShowingSettings(false)
+                } else {
+                    setPaused(!isPaused)
+                }
             }
             return
         }
@@ -387,9 +445,9 @@ struct GameView: View {
     private var topInfoBar: some View {
         HStack(spacing: 8) {
             Button {
-                gameManager.currentScreen = .slotSelection
+                setShowingSettings(true)
             } label: {
-                Image(systemName: "house.fill")
+                Image(systemName: "gearshape.fill")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 40, height: 40)
@@ -466,13 +524,15 @@ struct GameView: View {
 
     private func wireCallbacks() {
         desertScene.onOasisReached = { oasis in
-            let key = "\(oasis.position.x)-\(oasis.position.z)"
-            guard !oasisFoundSet.contains(key) else { return }
-            oasisFoundSet.insert(key)
+            DispatchQueue.main.async {
+                let key = "\(oasis.position.x)-\(oasis.position.z)"
+                guard !oasisFoundSet.contains(key) else { return }
+                oasisFoundSet.insert(key)
 
-            let found = slot.oasisFound + 1
-            gameManager.updateProgress(slotIndex: slotIndex, oasisFound: found)
-            showToast("Oasis found! (\(found))")
+                let found = slot.oasisFound + 1
+                gameManager.updateProgress(slotIndex: slotIndex, oasisFound: found)
+                showToast("Oasis found! (\(found))")
+            }
         }
 
         desertScene.onWaterCollected = {
@@ -492,7 +552,7 @@ struct GameView: View {
                 campWaterLevel = level
             }
 
-            var deliveries = slot.waterDeliveries + 1
+            let deliveries = slot.waterDeliveries + 1
             let stage = desertScene.camps.first { $0.site.id == campId }?.oasisStage ?? oasisStage
             let prog = desertScene.camps.first { $0.site.id == campId }?.oasisProgress ?? oasisProgress
             gameManager.updateProgress(
@@ -523,15 +583,15 @@ struct GameView: View {
         }
 
         desertScene.onNearBarrel = { near in
-            withAnimation { isNearBarrel = near }
+            DispatchQueue.main.async { withAnimation { isNearBarrel = near } }
         }
 
         desertScene.onNearWater = { near in
-            withAnimation { isNearWater = near }
+            DispatchQueue.main.async { withAnimation { isNearWater = near } }
         }
 
         desertScene.onNearBed = { near in
-            withAnimation { isNearBed = near }
+            DispatchQueue.main.async { withAnimation { isNearBed = near } }
         }
 
         desertScene.onNearSettingsTable = { near in
@@ -540,30 +600,34 @@ struct GameView: View {
         }
 
         desertScene.onCampDrained = { level, campId in
-            if campId == "home" {
-                let prev = campWaterLevel
-                campWaterLevel = level
-                gameManager.updateProgress(slotIndex: slotIndex, campWaterLevel: level)
-                if level <= 0 && prev > 0 {
-                    showToast("The camp barrel is empty!")
-                    lastWaterWarningLevel = 0
-                } else if level < 0.2 && lastWaterWarningLevel >= 0.2 {
-                    showToast("Camp water running low!")
-                    lastWaterWarningLevel = level
+            DispatchQueue.main.async {
+                if campId == "home" {
+                    let prev = campWaterLevel
+                    campWaterLevel = level
+                    gameManager.updateProgress(slotIndex: slotIndex, campWaterLevel: level)
+                    if level <= 0 && prev > 0 {
+                        showToast("The camp barrel is empty!")
+                        lastWaterWarningLevel = 0
+                    } else if level < 0.2 && lastWaterWarningLevel >= 0.2 {
+                        showToast("Camp water running low!")
+                        lastWaterWarningLevel = level
+                    }
+                } else {
+                    persistCamp(campId)
                 }
-            } else {
-                persistCamp(campId)
             }
         }
 
         desertScene.onOasisGrown = { campId, stage, progress, advanced in
-            if campId == "home" {
-                oasisStage = stage
-                oasisProgress = progress
-            }
-            persistCamp(campId)
-            if advanced {
-                showToast("The oasis grows — \(stage.displayName)!")
+            DispatchQueue.main.async {
+                if campId == "home" {
+                    oasisStage = stage
+                    oasisProgress = progress
+                }
+                persistCamp(campId)
+                if advanced {
+                    showToast("The oasis grows — \(stage.displayName)!")
+                }
             }
         }
 
@@ -576,8 +640,10 @@ struct GameView: View {
         }
 
         desertScene.onTimeOfDayChanged = { t in
-            timeOfDay = t
-            gameManager.updateProgress(slotIndex: slotIndex, timeOfDay: t)
+            DispatchQueue.main.async {
+                timeOfDay = t
+                gameManager.updateProgress(slotIndex: slotIndex, timeOfDay: t)
+            }
         }
 
         desertScene.onWaterGivenToNPC = { npc in
@@ -1331,6 +1397,56 @@ final class GameSCNView: SCNView {
         case " ": return .jump
         default: return nil
         }
+    }
+}
+
+// MARK: - Joystick
+
+struct JoystickView: View {
+    @Binding var offset: CGSize
+    /// dx = right, dy = forward (stick-up is positive).
+    var onMove: (Float, Float) -> Void
+
+    private let radius: CGFloat = 55
+    private let thumbRadius: CGFloat = 24
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.black.opacity(0.3))
+                .frame(width: radius * 2, height: radius * 2)
+                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1.5))
+
+            Circle()
+                .fill(.white.opacity(0.5))
+                .frame(width: thumbRadius * 2, height: thumbRadius * 2)
+                .offset(clampedOffset)
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    let clamped = clampToRadius(v.translation)
+                    offset = clamped
+                    let dx = Float(clamped.width / radius)
+                    let dy = Float(-clamped.height / radius) // screen-up → forward +
+                    onMove(dx, dy)
+                }
+                .onEnded { _ in
+                    offset = .zero
+                    onMove(0, 0)
+                }
+        )
+    }
+
+    private var clampedOffset: CGSize {
+        clampToRadius(offset)
+    }
+
+    private func clampToRadius(_ value: CGSize) -> CGSize {
+        let len = sqrt(value.width * value.width + value.height * value.height)
+        guard len > radius else { return value }
+        let scale = radius / len
+        return CGSize(width: value.width * scale, height: value.height * scale)
     }
 }
 

@@ -161,7 +161,7 @@ struct ChatBubble: View {
 // MARK: - Typing indicator
 
 struct ThinkingBubble: View {
-    @State private var phase = 0
+    @State private var animate = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -169,8 +169,13 @@ struct ThinkingBubble: View {
                 Circle()
                     .fill(Color.white.opacity(0.6))
                     .frame(width: 7, height: 7)
-                    .offset(y: phase == i ? -4 : 0)
-                    .animation(.easeInOut(duration: 0.4).repeatForever().delay(Double(i) * 0.15), value: phase)
+                    .offset(y: animate ? -4 : 0)
+                    .animation(
+                        .easeInOut(duration: 0.4)
+                        .repeatForever(autoreverses: true)
+                        .delay(Double(i) * 0.15),
+                        value: animate
+                    )
             }
         }
         .padding(.horizontal, 16)
@@ -178,7 +183,7 @@ struct ThinkingBubble: View {
         .background(Color(white: 0.22))
         .clipShape(BubbleShape(isPlayer: false))
         .onAppear {
-            withAnimation { phase = 0 }
+            animate = true
         }
     }
 }
