@@ -28,6 +28,8 @@ final class CampNode: SCNNode {
     private(set) var fillLevel: Float = 0
     /// World-space tent keep-outs (filled after tents are placed).
     private(set) var tentFootprints: [TentFootprint] = []
+    /// Tent roots used for solid wall collision (open front).
+    private var tentNodes: [SCNNode] = []
 
     let interactionRadius: Float = 3.5
     static let deliveryAmount: Float = 0.12
@@ -73,6 +75,68 @@ final class CampNode: SCNNode {
         tentFootprints.contains { $0.contains(x: worldX, z: worldZ) }
     }
 
+    /// Slide / block horizontal motion against tent canvas walls. Front doorway stays open.
+    func resolvePlayerXZ(from prev: SIMD2<Float>,
+                         to next: SIMD2<Float>,
+                         worldY: Float,
+                         radius: Float) -> SIMD2<Float> {
+        if !collidesTentWalls(x: next.x, y: worldY, z: next.y, radius: radius) {
+            return next
+        }
+        let slideX = SIMD2<Float>(next.x, prev.y)
+        if !collidesTentWalls(x: slideX.x, y: worldY, z: slideX.y, radius: radius) {
+            return slideX
+        }
+        let slideZ = SIMD2<Float>(prev.x, next.y)
+        if !collidesTentWalls(x: slideZ.x, y: worldY, z: slideZ.y, radius: radius) {
+            return slideZ
+        }
+        return prev
+    }
+
+    func collidesTentWalls(x: Float, y: Float, z: Float, radius: Float) -> Bool {
+        tentNodes.contains { tentWallHit(tent: $0, world: SCNVector3(x, y, z), radius: radius) }
+    }
+
+    private func tentWallHit(tent: SCNNode, world: SCNVector3, radius: Float) -> Bool {
+        let local = tent.convertPosition(world, from: nil)
+        let uf = VoxelMetrics.unit
+        // Match VoxelPropBuilder.tent sculpture extents (local space before root scale).
+        let halfW = 16 * uf
+        let halfD = 25 * uf
+        let wallT = 3.2 * uf
+        let maxY = 24 * uf
+        let doorHalf = 7.5 * uf
+
+        let scale = max(tent.scale.x, 0.001)
+        let r = radius / scale
+
+        if local.y < -0.05 || local.y > maxY + r { return false }
+
+        let lx = local.x
+        let lz = local.z
+
+        let inOuter = abs(lx) <= halfW + r
+            && lz >= -halfD - r
+            && lz <= halfD + r
+        guard inOuter else { return false }
+
+        // Open front (+Z): allow walking in/out through the doorway.
+        if lz > halfD - wallT * 2 - r && abs(lx) < doorHalf {
+            return false
+        }
+
+        let innerW = halfW - wallT
+        let innerBack = -halfD + wallT
+        let inInterior = abs(lx) < innerW - r
+            && lz > innerBack + r
+            && lz < halfD + r
+        if inInterior { return false }
+
+        // Overlaps the canvas shell (side walls, back wall, or corners).
+        return true
+    }
+
     private func registerTentFootprint(localX: Float, localZ: Float, scale: Float) {
         tentFootprints.append(TentFootprint(
             x: position.x + localX,
@@ -87,6 +151,7 @@ final class CampNode: SCNNode {
         playerTent.position = SCNVector3(0, 0, 3.2)
         playerTent.eulerAngles.y = Float.pi
         addChildNode(playerTent)
+        tentNodes.append(playerTent)
         registerTentFootprint(localX: 0, localZ: 3.2, scale: playerScale)
 
         // Keep neighbour tents well inside the flat camp pad (~12 m radius).
@@ -107,6 +172,7 @@ final class CampNode: SCNNode {
             tent.eulerAngles.y = offset.2
             tent.name = "neighbour_tent_\(i)"
             addChildNode(tent)
+            tentNodes.append(tent)
             registerTentFootprint(localX: wx, localZ: wz, scale: neighbourScale)
         }
     }

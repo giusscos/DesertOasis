@@ -18,8 +18,17 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private let cameraLookTarget = SCNNode()
     private var cameraPitch: Float = -0.32
     private let cameraDistance: Float = 8.2
+    private let cameraMinDistance: Float = 1.15
+    /// Solid camera sphere radius used for collision.
+    private let cameraRadius: Float = 0.4
+    /// How quickly the view direction orbits toward the desired boom angle.
+    private let cameraOrbitSpeed: Float = 18
+    /// How quickly boom length expands/contracts along the current view ray.
+    private let cameraDistanceSpeed: Float = 14
+    private var cameraWorldPosition: SCNVector3?
     private let cameraPitchMin: Float = -1.05
     private let cameraPitchMax: Float = 0.40
+    private let playerCollisionRadius: Float = 0.32
 
     var onNPCProximity: ((NPCNode) -> Void)?
     var onOasisReached: ((OasisInfo) -> Void)?
@@ -209,6 +218,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     private func setupSky() {
         let sky = SCNNode(geometry: SCNSphere(radius: 400))
+        sky.name = "sky"
         let mat = SCNMaterial()
         mat.diffuse.contents = skyboxGradient()
         mat.isDoubleSided = true
@@ -254,6 +264,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         cameraNode.camera = camera
         cameraNode.eulerAngles = SCNVector3Zero
         cameraNode.position = SCNVector3(0, 0, cameraDistance)
+        cameraWorldPosition = nil
         cameraNode.constraints = nil
 
         // Look target rides on the yaw arm (player height), not the pitch boom
@@ -278,11 +289,292 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             rootNode.addChildNode(cameraArmNode)
         }
         syncCameraFollow()
+        resolveCameraCollision(deltaTime: 1)
     }
 
     private func syncCameraFollow() {
         guard let playerNode else { return }
         cameraArmNode.position = playerNode.position
+    }
+
+    /// Orbit the camera around obstacles: rotate the view ray fluidly and ride the
+    /// contact silhouette instead of stopping with friction when blocked.
+    private func resolveCameraCollision(deltaTime: Float) {
+        let lookWorld = cameraLookTarget.convertPosition(SCNVector3Zero, to: nil)
+        let desiredWorld = cameraPitchNode.convertPosition(SCNVector3(0, 0, cameraDistance), to: nil)
+
+        let desiredVec = simd_float3(
+            desiredWorld.x - lookWorld.x,
+            desiredWorld.y - lookWorld.y,
+            desiredWorld.z - lookWorld.z
+        )
+        let desiredLen = simd_length(desiredVec)
+        guard desiredLen > 1e-4 else { return }
+        let desiredDir = desiredVec / desiredLen
+
+        let previous = cameraWorldPosition ?? desiredWorld
+        var prevVec = simd_float3(
+            previous.x - lookWorld.x,
+            previous.y - lookWorld.y,
+            previous.z - lookWorld.z
+        )
+        var prevLen = simd_length(prevVec)
+        if prevLen < 1e-4 {
+            prevVec = desiredVec
+            prevLen = desiredLen
+        }
+        let prevDir = prevVec / prevLen
+
+        let dt = max(0, deltaTime)
+        let orbitBlend = 1 - exp(-cameraOrbitSpeed * dt)
+        let dir = slerpCameraDir(prevDir, desiredDir, orbitBlend)
+
+        // Clear length along this orbit ray — follows the object perimeter as you pan.
+        let probeEnd = SCNVector3(
+            lookWorld.x + dir.x * cameraDistance,
+            lookWorld.y + dir.y * cameraDistance,
+            lookWorld.z + dir.z * cameraDistance
+        )
+        let clearDist = clearCameraDistance(from: lookWorld, toward: probeEnd)
+
+        let distBlend = 1 - exp(-cameraDistanceSpeed * dt)
+        var dist = prevLen + (clearDist - prevLen) * distBlend
+        dist = max(cameraMinDistance, min(cameraDistance, dist))
+
+        var pos = SCNVector3(
+            lookWorld.x + dir.x * dist,
+            lookWorld.y + dir.y * dist,
+            lookWorld.z + dir.z * dist
+        )
+
+        // If the sphere clips while sliding around a surface, glide along the tangent.
+        pos = slideCameraAlongSurfaces(from: previous, to: pos)
+
+        pos = depenetrateCamera(at: pos)
+        pos = projectCameraOntoLookRay(pos, look: lookWorld, direction: dir, distance: dist)
+
+        if let voxelWorld {
+            let ground = voxelWorld.surfaceY(atWorldX: pos.x, worldZ: pos.z)
+            if pos.y < ground + cameraRadius {
+                pos.y = ground + cameraRadius
+                // Keep framing: push back onto the orbit ray at a safe distance.
+                let toCam = simd_float3(pos.x - lookWorld.x, pos.y - lookWorld.y, pos.z - lookWorld.z)
+                let len = simd_length(toCam)
+                if len > 1e-4 {
+                    let nd = toCam / len
+                    let d = max(cameraMinDistance, min(cameraDistance, len))
+                    pos = SCNVector3(
+                        lookWorld.x + nd.x * d,
+                        lookWorld.y + nd.y * d,
+                        lookWorld.z + nd.z * d
+                    )
+                }
+            }
+        }
+
+        cameraWorldPosition = pos
+        cameraNode.position = cameraPitchNode.convertPosition(pos, from: nil)
+    }
+
+    private func slerpCameraDir(_ from: simd_float3, _ to: simd_float3, _ t: Float) -> simd_float3 {
+        let clampedT = max(0, min(1, t))
+        let dot = max(-1, min(1, simd_dot(from, to)))
+        if dot > 0.9995 {
+            return simd_normalize(from * (1 - clampedT) + to * clampedT)
+        }
+        if dot < -0.9995 {
+            // Opposite directions — pick a perpendicular axis and rotate.
+            var axis = simd_cross(from, simd_float3(0, 1, 0))
+            if simd_length(axis) < 1e-4 {
+                axis = simd_cross(from, simd_float3(1, 0, 0))
+            }
+            axis = simd_normalize(axis)
+            let half = simd_quatf(angle: .pi * clampedT, axis: axis)
+            return simd_normalize(half.act(from))
+        }
+        let theta = acos(dot)
+        let sinTheta = sin(theta)
+        let w1 = sin((1 - clampedT) * theta) / sinTheta
+        let w2 = sin(clampedT * theta) / sinTheta
+        return simd_normalize(from * w1 + to * w2)
+    }
+
+    private func clearCameraDistance(from: SCNVector3, toward: SCNVector3) -> Float {
+        let move = simd_float3(toward.x - from.x, toward.y - from.y, toward.z - from.z)
+        let moveLen = simd_length(move)
+        guard moveLen > cameraMinDistance else { return cameraMinDistance }
+
+        var best = moveLen
+        let hits = rootNode.hitTestWithSegment(from: from, to: toward, options: cameraHitOptions())
+        for hit in hits {
+            guard !shouldIgnoreCameraHit(hit.node) else { continue }
+            let hx = Float(hit.worldCoordinates.x - from.x)
+            let hy = Float(hit.worldCoordinates.y - from.y)
+            let hz = Float(hit.worldCoordinates.z - from.z)
+            let hitDist = sqrt(hx * hx + hy * hy + hz * hz)
+            best = min(best, max(cameraMinDistance, hitDist - cameraRadius))
+        }
+        return min(cameraDistance, best)
+    }
+
+    /// Collide-and-slide so orbiting around an obstacle follows its perimeter.
+    private func slideCameraAlongSurfaces(from: SCNVector3, to: SCNVector3) -> SCNVector3 {
+        var pos = from
+        var remaining = simd_float3(to.x - from.x, to.y - from.y, to.z - from.z)
+
+        for _ in 0..<4 {
+            let remLen = simd_length(remaining)
+            if remLen < 1e-5 { break }
+
+            let candidate = SCNVector3(pos.x + remaining.x, pos.y + remaining.y, pos.z + remaining.z)
+            let hits = rootNode.hitTestWithSegment(from: pos, to: candidate, options: cameraHitOptions())
+            var closestHit: SCNHitTestResult?
+            var closestDist = remLen
+            for hit in hits {
+                guard !shouldIgnoreCameraHit(hit.node) else { continue }
+                let hx = Float(hit.worldCoordinates.x - pos.x)
+                let hy = Float(hit.worldCoordinates.y - pos.y)
+                let hz = Float(hit.worldCoordinates.z - pos.z)
+                let hitDist = sqrt(hx * hx + hy * hy + hz * hz)
+                if hitDist < closestDist {
+                    closestDist = hitDist
+                    closestHit = hit
+                }
+            }
+
+            guard let hit = closestHit else {
+                pos = candidate
+                break
+            }
+
+            let travel = max(0, closestDist - cameraRadius * 0.98)
+            let step = remaining / remLen
+            pos = SCNVector3(
+                pos.x + step.x * travel,
+                pos.y + step.y * travel,
+                pos.z + step.z * travel
+            )
+
+            var normal = simd_float3(
+                Float(hit.worldNormal.x),
+                Float(hit.worldNormal.y),
+                Float(hit.worldNormal.z)
+            )
+            let nLen = simd_length(normal)
+            if nLen > 1e-4 {
+                normal /= nLen
+            } else {
+                normal = -step
+            }
+            // Outward from the surface (against the approach).
+            if simd_dot(normal, step) > 0 {
+                normal = -normal
+            }
+
+            // Keep only the tangential part → glide around the perimeter.
+            let into = simd_dot(remaining, normal)
+            if into < 0 {
+                remaining -= normal * into
+            } else {
+                remaining = simd_float3(0, 0, 0)
+            }
+
+            pos = SCNVector3(
+                pos.x + normal.x * 0.02,
+                pos.y + normal.y * 0.02,
+                pos.z + normal.z * 0.02
+            )
+        }
+        return pos
+    }
+
+    private func projectCameraOntoLookRay(_ position: SCNVector3,
+                                          look: SCNVector3,
+                                          direction: simd_float3,
+                                          distance: Float) -> SCNVector3 {
+        // Prefer staying on the intended orbit ray after sliding/depenetration.
+        let onRay = SCNVector3(
+            look.x + direction.x * distance,
+            look.y + direction.y * distance,
+            look.z + direction.z * distance
+        )
+        // If on-ray is clear of fresh penetration, use it; otherwise keep slid position
+        // projected to the same distance from the look target.
+        let clear = clearCameraDistance(from: look, toward: onRay)
+        if clear >= distance - 0.05 {
+            return onRay
+        }
+        let offset = simd_float3(position.x - look.x, position.y - look.y, position.z - look.z)
+        let len = simd_length(offset)
+        guard len > 1e-4 else { return onRay }
+        let d = max(cameraMinDistance, min(distance, len))
+        let nd = offset / len
+        return SCNVector3(look.x + nd.x * d, look.y + nd.y * d, look.z + nd.z * d)
+    }
+
+    private func depenetrateCamera(at position: SCNVector3) -> SCNVector3 {
+        var pos = position
+        let axes: [simd_float3] = [
+            simd_float3(1, 0, 0), simd_float3(-1, 0, 0),
+            simd_float3(0, 1, 0), simd_float3(0, -1, 0),
+            simd_float3(0, 0, 1), simd_float3(0, 0, -1),
+            simd_normalize(simd_float3(1, 0, 1)),
+            simd_normalize(simd_float3(-1, 0, 1)),
+            simd_normalize(simd_float3(1, 0, -1)),
+            simd_normalize(simd_float3(-1, 0, -1)),
+        ]
+        for dir in axes {
+            let end = SCNVector3(
+                pos.x + dir.x * cameraRadius,
+                pos.y + dir.y * cameraRadius,
+                pos.z + dir.z * cameraRadius
+            )
+            let hits = rootNode.hitTestWithSegment(from: pos, to: end, options: cameraHitOptions())
+            for hit in hits {
+                guard !shouldIgnoreCameraHit(hit.node) else { continue }
+                let hx = Float(hit.worldCoordinates.x - pos.x)
+                let hy = Float(hit.worldCoordinates.y - pos.y)
+                let hz = Float(hit.worldCoordinates.z - pos.z)
+                let hitDist = sqrt(hx * hx + hy * hy + hz * hz)
+                let penetration = cameraRadius - hitDist
+                if penetration > 0 {
+                    let n = hit.worldNormal
+                    var nx = Float(n.x), ny = Float(n.y), nz = Float(n.z)
+                    let nLen = sqrt(nx * nx + ny * ny + nz * nz)
+                    if nLen > 1e-4 {
+                        nx /= nLen; ny /= nLen; nz /= nLen
+                    } else {
+                        nx = dir.x; ny = dir.y; nz = dir.z
+                    }
+                    pos.x += nx * penetration
+                    pos.y += ny * penetration
+                    pos.z += nz * penetration
+                }
+            }
+        }
+        return pos
+    }
+
+    private func cameraHitOptions() -> [String: Any] {
+        [
+            SCNHitTestOption.searchMode.rawValue: SCNHitTestSearchMode.all.rawValue,
+            SCNHitTestOption.ignoreHiddenNodes.rawValue: true,
+        ]
+    }
+
+    private func shouldIgnoreCameraHit(_ node: SCNNode) -> Bool {
+        var current: SCNNode? = node
+        while let n = current {
+            if n === playerNode || n === cameraArmNode || n === cameraPitchNode
+                || n === cameraNode || n === cameraLookTarget {
+                return true
+            }
+            if let name = n.name, name == "sky" || name == "tool_rig" {
+                return true
+            }
+            current = n.parent
+        }
+        return false
     }
 
     // MARK: - NPCs
@@ -434,13 +726,14 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             let level = camp.drainWater(amount: campDrainAmount)
             onCampDrained?(level)
         }
-        syncCameraFollow()
         applyMovement(deltaTime: dt)
         updateNPCs(deltaTime: dt)
         updateWater(deltaTime: dt)
         updateTools()
         checkProximity()
         checkBarrelProximity()
+        syncCameraFollow()
+        resolveCameraCollision(deltaTime: dt)
     }
 
     private func updateNPCs(deltaTime: Float) {
@@ -491,6 +784,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         } else {
             playerHorizontalSpeed = 0
             playerNode.setWalking(false)
+        }
+
+        if let camp {
+            let bodyY = playerNode.position.y + 0.7
+            let resolved = camp.resolvePlayerXZ(
+                from: SIMD2(prevX, prevZ),
+                to: SIMD2(nextX, nextZ),
+                worldY: bodyY,
+                radius: playerCollisionRadius
+            )
+            nextX = resolved.x
+            nextZ = resolved.y
         }
 
         let yOff: Float = isInWater ? -0.08 : 0.01
@@ -644,6 +949,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         cameraArmNode.eulerAngles.y -= yawDelta
         cameraPitch = max(cameraPitchMin, min(cameraPitchMax, cameraPitch + pitchDelta))
         cameraPitchNode.eulerAngles.x = cameraPitch
+        // Keep collision progressive while orbiting (approx one display frame).
+        resolveCameraCollision(deltaTime: 1.0 / 60.0)
     }
 
     /// Backward-compatible yaw-only helper.
