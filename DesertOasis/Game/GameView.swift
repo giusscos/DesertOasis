@@ -1,5 +1,7 @@
 import SwiftUI
 import SceneKit
+import UIKit
+import GameController
 
 struct GameView: View {
     @Bindable var gameManager: GameManager
@@ -7,8 +9,6 @@ struct GameView: View {
 
     @State private var desertScene = DesertScene()
     @State private var dialogueManager = DialogueManager()
-    @State private var joystickOffset: CGSize = .zero
-    @State private var lastCameraTranslation: CGSize = .zero
     @State private var toastMessage: String? = nil
     @State private var oasisFoundSet: Set<String> = []
     @State private var sceneBuilt = false
@@ -24,7 +24,28 @@ struct GameView: View {
     @State private var isRunningHeld = false
     @State private var lastWaterWarningLevel: Float = 1.0
     @State private var isSleeping = false
+    @State private var isPaused = false
     @State private var timeOfDay: Float = 0.32
+    @State private var pressedKeys: Set<GameKey> = []
+    @State private var runSources: Set<RunSource> = []
+
+    private enum GameKey: Hashable {
+        case moveForward, moveBack, moveLeft, moveRight
+    }
+
+    private enum RunSource: Hashable {
+        case shiftOrR, touch
+    }
+
+    /// Playing with hidden, confined cursor.
+    private var isPointerLockedGameplay: Bool {
+        !isLoadingWorld && !isSleeping && !isPaused && !dialogueManager.isVisible
+    }
+
+    /// Keyboard capture (includes pause so Esc can resume).
+    private var acceptsKeyboardInput: Bool {
+        !isLoadingWorld && !isSleeping && !dialogueManager.isVisible
+    }
 
     private enum ActionKind {
         case giveWater(NPCNode), deliver, collect, sleep
@@ -74,15 +95,23 @@ struct GameView: View {
             // 3D game scene
             GameSceneView(
                 scene: desertScene,
+                acceptsKeyboard: acceptsKeyboardInput,
+                pointerLookEnabled: isPointerLockedGameplay,
                 onNPCTapped: handleNPCTap,
+                onAnimalTapped: handleAnimalTap,
                 onBedTapped: handleBedTap,
                 onSettingsTableTapped: {
-                    guard !isSleeping else { return }
+                    guard !isSleeping, !isPaused else { return }
                     showToast("Camp table — rest at the bed to skip the night.")
+                },
+                onKeyDown: { handleHardwareKey($0, isDown: true) },
+                onKeyUp: { handleHardwareKey($0, isDown: false) },
+                onCameraDrag: { yaw, pitch in
+                    guard isPointerLockedGameplay else { return }
+                    desertScene.rotateCamera(yawDelta: yaw, pitchDelta: pitch)
                 }
             )
                 .ignoresSafeArea()
-                .gesture(cameraDragGesture)
                 .allowsHitTesting(!isLoadingWorld && !isSleeping)
 
             if isLoadingWorld {
@@ -97,6 +126,18 @@ struct GameView: View {
                     .zIndex(9)
             }
 
+            if isPaused, !isLoadingWorld, !isSleeping {
+                PauseOverlay(
+                    onResume: { setPaused(false) },
+                    onExitToCamp: {
+                        setPaused(false)
+                        gameManager.currentScreen = .slotSelection
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(11)
+            }
+
             // Dialogue panel
             if !isLoadingWorld, dialogueManager.isVisible {
                 VStack {
@@ -107,6 +148,17 @@ struct GameView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 .animation(.spring(duration: 0.4), value: dialogueManager.isVisible)
+                .onKeyPress(.escape) {
+                    dialogueManager.endConversation()
+                    return .handled
+                }
+                .onKeyPress(KeyEquivalent("e")) {
+                    if let action = currentAction {
+                        performAction(action)
+                        return .handled
+                    }
+                    return .ignored
+                }
             }
 
             // Give water button — floats above dialogue panel
@@ -147,8 +199,8 @@ struct GameView: View {
                 .animation(.easeOut(duration: 0.5), value: toastMessage != nil)
             }
 
-            // HUD (hidden while chatting / loading / sleeping)
-            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping {
+            // HUD (hidden while chatting / loading / sleeping / paused)
+            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused {
                 VStack(spacing: 0) {
                     topInfoBar
                         .padding(.horizontal, 12)
@@ -156,14 +208,7 @@ struct GameView: View {
 
                     Spacer()
 
-                    HStack(alignment: .bottom) {
-                        JoystickView(offset: $joystickOffset) { dx, dy in
-                            desertScene.setMoveInput(dx: dx, dy: dy)
-                            savePositionDebounced()
-                        }
-                        .padding(.leading, 28)
-                        .padding(.bottom, 16)
-
+                    HStack {
                         Spacer()
 
                         VStack(spacing: 14) {
@@ -174,14 +219,19 @@ struct GameView: View {
 
                             HoldActionButton(
                                 systemName: "figure.run",
+                                keyLabel: "⇧",
                                 isActive: isRunningHeld,
                                 activeColor: Color(red: 0.95, green: 0.55, blue: 0.15)
                             ) { held in
-                                isRunningHeld = held
-                                desertScene.setRunning(held)
+                                if held {
+                                    runSources.insert(.touch)
+                                } else {
+                                    runSources.remove(.touch)
+                                }
+                                syncRunning()
                             }
 
-                            TapActionButton(systemName: "arrow.up") {
+                            TapActionButton(systemName: "arrow.up", keyLabel: "Space") {
                                 desertScene.jump()
                             }
                         }
@@ -194,7 +244,32 @@ struct GameView: View {
                 .animation(.easeOut(duration: 0.25), value: dialogueManager.isVisible)
             }
         }
+        .onChange(of: isPointerLockedGameplay) { _, locked in
+            PointerLockBridge.wantsLock = locked
+        }
+        .onDisappear {
+            PointerLockBridge.wantsLock = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIPointerLockState.didChangeNotification)) { _ in
+            // Re-assert preference after system evaluates click / fullscreen requirements.
+            if isPointerLockedGameplay {
+                PointerLockBridge.refresh()
+            }
+        }
+        .onChange(of: dialogueManager.isVisible) { _, visible in
+            if visible {
+                clearKeyboardMovement()
+                if isPaused { isPaused = false }
+            }
+        }
+        .onChange(of: isSleeping) { _, sleeping in
+            if sleeping {
+                clearKeyboardMovement()
+                isPaused = false
+            }
+        }
         .onAppear {
+            PointerLockBridge.wantsLock = isPointerLockedGameplay
             guard !sceneBuilt else { return }
             sceneBuilt = true
             carryingWater = slot.isCarryingWater
@@ -211,8 +286,101 @@ struct GameView: View {
                     isLoadingWorld = false
                 }
                 wireCallbacks()
+                PointerLockBridge.wantsLock = true
             }
             desertScene.build(from: slot)
+        }
+    }
+
+    // MARK: - Keyboard / pause
+
+    private func setPaused(_ paused: Bool) {
+        guard isPaused != paused else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            isPaused = paused
+        }
+        if paused {
+            clearKeyboardMovement()
+            PointerLockBridge.wantsLock = false
+        } else {
+            PointerLockBridge.wantsLock = isPointerLockedGameplay
+        }
+    }
+
+    private func clearKeyboardMovement() {
+        pressedKeys.removeAll()
+        runSources.remove(.shiftOrR)
+        desertScene.setMoveInput(dx: 0, dy: 0)
+        syncRunning()
+    }
+
+    private func applyKeyboardMoveInput() {
+        var dx: Float = 0
+        var dy: Float = 0
+        if pressedKeys.contains(.moveLeft) { dx -= 1 }
+        if pressedKeys.contains(.moveRight) { dx += 1 }
+        if pressedKeys.contains(.moveForward) { dy += 1 }
+        if pressedKeys.contains(.moveBack) { dy -= 1 }
+
+        desertScene.setMoveInput(dx: dx, dy: dy)
+        if dx != 0 || dy != 0 {
+            savePositionDebounced()
+        }
+    }
+
+    private func syncRunning() {
+        let running = !runSources.isEmpty
+        guard running != isRunningHeld else { return }
+        isRunningHeld = running
+        desertScene.setRunning(running)
+    }
+
+    private func handleHardwareKey(_ key: GameHardwareKey, isDown: Bool) {
+        // Dialogue Esc/E are handled via SwiftUI onKeyPress so the text field can focus.
+        guard !dialogueManager.isVisible else { return }
+        guard !isLoadingWorld, !isSleeping else { return }
+
+        if key == .escape {
+            if isDown {
+                setPaused(!isPaused)
+            }
+            return
+        }
+
+        guard !isPaused else { return }
+
+        switch key {
+        case .moveForward:
+            if isDown { pressedKeys.insert(.moveForward) } else { pressedKeys.remove(.moveForward) }
+            applyKeyboardMoveInput()
+        case .moveBack:
+            if isDown { pressedKeys.insert(.moveBack) } else { pressedKeys.remove(.moveBack) }
+            applyKeyboardMoveInput()
+        case .moveLeft:
+            if isDown { pressedKeys.insert(.moveLeft) } else { pressedKeys.remove(.moveLeft) }
+            applyKeyboardMoveInput()
+        case .moveRight:
+            if isDown { pressedKeys.insert(.moveRight) } else { pressedKeys.remove(.moveRight) }
+            applyKeyboardMoveInput()
+
+        case .run:
+            if isDown {
+                runSources.insert(.shiftOrR)
+            } else {
+                runSources.remove(.shiftOrR)
+            }
+            syncRunning()
+
+        case .jump:
+            if isDown { desertScene.jump() }
+
+        case .action:
+            if isDown, let action = currentAction {
+                performAction(action)
+            }
+
+        case .escape:
+            break
         }
     }
 
@@ -482,6 +650,18 @@ struct GameView: View {
         )
     }
 
+    private func handleAnimalTap(_ animal: AnimalNode) {
+        guard !isLoadingWorld, !isSleeping, !dialogueManager.isVisible else { return }
+        if let player = desertScene.playerNode {
+            let dx = animal.position.x - player.position.x
+            let dz = animal.position.z - player.position.z
+            let r = animal.interactionRadius
+            guard dx * dx + dz * dz < r * r else { return }
+        }
+        animal.reactToTap()
+        showToast(animal.kind.tapMessage)
+    }
+
     private func handleBedTap() {
         guard !isLoadingWorld, !isSleeping, isNearBed else { return }
         startSleep()
@@ -496,17 +676,22 @@ struct GameView: View {
     @ViewBuilder
     private func contextActionButton(for action: ActionKind) -> some View {
         Button { performAction(action) } label: {
-            VStack(spacing: 3) {
-                Image(systemName: action.icon)
-                    .font(.system(size: 22, weight: .bold))
-                Text(action.label)
-                    .font(.system(size: 11, weight: .bold, design: .serif))
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 3) {
+                    Image(systemName: action.icon)
+                        .font(.system(size: 22, weight: .bold))
+                    Text(action.label)
+                        .font(.system(size: 11, weight: .bold, design: .serif))
+                }
+                .foregroundStyle(.white)
+                .frame(width: 64, height: 64)
+                .background(action.tint.opacity(0.82), in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1.5))
+                .shadow(radius: 4)
+
+                KeyCaptionBadge(label: "E")
+                    .offset(x: 6, y: -4)
             }
-            .foregroundStyle(.white)
-            .frame(width: 64, height: 64)
-            .background(action.tint.opacity(0.82), in: Circle())
-            .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1.5))
-            .shadow(radius: 4)
         }
         .buttonStyle(.plain)
     }
@@ -526,20 +711,6 @@ struct GameView: View {
             try? await Task.sleep(for: .seconds(2.8))
             await MainActor.run { withAnimation { toastMessage = nil } }
         }
-    }
-
-    // MARK: - Camera drag
-
-    var cameraDragGesture: some Gesture {
-        DragGesture(minimumDistance: 4)
-            .onChanged { value in
-                guard !isLoadingWorld, !isSleeping, !dialogueManager.isVisible else { return }
-                let dx = Float(value.translation.width - lastCameraTranslation.width) * 0.005
-                let dy = Float(value.translation.height - lastCameraTranslation.height) * 0.004
-                desertScene.rotateCamera(yawDelta: dx, pitchDelta: -dy)
-                lastCameraTranslation = value.translation
-            }
-            .onEnded { _ in lastCameraTranslation = .zero }
     }
 
     // MARK: - Save debounce
@@ -595,6 +766,67 @@ struct SleepOverlay: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Pause overlay
+
+struct PauseOverlay: View {
+    var onResume: () -> Void
+    var onExitToCamp: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+
+            VStack(spacing: 22) {
+                Text("Paused")
+                    .font(.system(size: 34, weight: .bold, design: .serif))
+                    .foregroundStyle(.white)
+
+                Text("Cursor unlocked — click Resume (or Esc), then click the game to capture the cursor again.")
+                    .font(.system(size: 14, weight: .medium, design: .serif))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
+
+                VStack(spacing: 12) {
+                    Button(action: onResume) {
+                        HStack(spacing: 10) {
+                            Text("Resume")
+                                .font(.system(size: 17, weight: .bold, design: .serif))
+                            KeyCaptionBadge(label: "Esc")
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: 260)
+                        .padding(.vertical, 14)
+                        .background(Color(red: 0.15, green: 0.50, blue: 0.80).opacity(0.95), in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: onExitToCamp) {
+                        Text("Back to Camp")
+                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(maxWidth: 260)
+                            .padding(.vertical, 12)
+                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(.white.opacity(0.22), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(28)
+            .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 22))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22)
+                    .stroke(.white.opacity(0.18), lineWidth: 1)
+            )
+        }
     }
 }
 
@@ -706,20 +938,33 @@ struct WorldLoadingOverlay: View {
     }
 }
 
+// MARK: - Hardware keyboard keys
+
+enum GameHardwareKey: Hashable {
+    case moveForward, moveBack, moveLeft, moveRight
+    case run, jump, action, escape
+}
+
 // MARK: - SCNView wrapper
 
 struct GameSceneView: UIViewRepresentable {
     let scene: DesertScene
+    var acceptsKeyboard: Bool = true
+    var pointerLookEnabled: Bool = true
     var onNPCTapped: ((NPCNode) -> Void)?
+    var onAnimalTapped: ((AnimalNode) -> Void)?
     var onBedTapped: (() -> Void)?
     var onSettingsTableTapped: (() -> Void)?
+    var onKeyDown: ((GameHardwareKey) -> Void)?
+    var onKeyUp: ((GameHardwareKey) -> Void)?
+    var onCameraDrag: ((Float, Float) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(scene: scene)
     }
 
-    func makeUIView(context: Context) -> SCNView {
-        let v = SCNView()
+    func makeUIView(context: Context) -> GameSCNView {
+        let v = GameSCNView()
         v.scene = scene
         v.delegate = context.coordinator
         v.allowsCameraControl = false
@@ -727,27 +972,69 @@ struct GameSceneView: UIViewRepresentable {
         v.isPlaying = true
         v.preferredFramesPerSecond = 60
         v.backgroundColor = UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
+        v.onKeyDown = { [weak coordinator = context.coordinator] key in
+            coordinator?.onKeyDown?(key)
+        }
+        v.onKeyUp = { [weak coordinator = context.coordinator] key in
+            coordinator?.onKeyUp?(key)
+        }
+        v.onCameraDrag = { [weak coordinator = context.coordinator] yaw, pitch in
+            coordinator?.onCameraDrag?(yaw, pitch)
+        }
 
         let tap = UITapGestureRecognizer(target: context.coordinator,
                                          action: #selector(Coordinator.handleTap(_:)))
         tap.cancelsTouchesInView = false
         v.addGestureRecognizer(tap)
+
+        // Touch-only drag orbit (phones / direct finger).
+        let pan = UIPanGestureRecognizer(target: v, action: #selector(GameSCNView.handleCameraPan(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.cancelsTouchesInView = false
+        pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        v.addGestureRecognizer(pan)
+        context.coordinator.cameraPanGesture = pan
+
+        // Pointer look (relative while pointer-locked on Mac / trackpad).
+        let hover = UIHoverGestureRecognizer(target: v, action: #selector(GameSCNView.handleCameraHover(_:)))
+        v.addGestureRecognizer(hover)
+
         return v
     }
 
-    func updateUIView(_ uiView: SCNView, context: Context) {
+    func updateUIView(_ uiView: GameSCNView, context: Context) {
         uiView.pointOfView = scene.activeCameraNode
         context.coordinator.scene = scene
         context.coordinator.onNPCTapped = onNPCTapped
+        context.coordinator.onAnimalTapped = onAnimalTapped
         context.coordinator.onBedTapped = onBedTapped
         context.coordinator.onSettingsTableTapped = onSettingsTableTapped
+        context.coordinator.onKeyDown = onKeyDown
+        context.coordinator.onKeyUp = onKeyUp
+        context.coordinator.onCameraDrag = onCameraDrag
+        uiView.onKeyDown = { [weak coordinator = context.coordinator] key in
+            coordinator?.onKeyDown?(key)
+        }
+        uiView.onKeyUp = { [weak coordinator = context.coordinator] key in
+            coordinator?.onKeyUp?(key)
+        }
+        uiView.onCameraDrag = { [weak coordinator = context.coordinator] yaw, pitch in
+            coordinator?.onCameraDrag?(yaw, pitch)
+        }
+        uiView.pointerLookEnabled = pointerLookEnabled
+        uiView.setKeyboardCaptureEnabled(acceptsKeyboard)
     }
 
     final class Coordinator: NSObject, SCNSceneRendererDelegate {
         var scene: DesertScene
         var onNPCTapped: ((NPCNode) -> Void)?
+        var onAnimalTapped: ((AnimalNode) -> Void)?
         var onBedTapped: (() -> Void)?
         var onSettingsTableTapped: (() -> Void)?
+        var onKeyDown: ((GameHardwareKey) -> Void)?
+        var onKeyUp: ((GameHardwareKey) -> Void)?
+        var onCameraDrag: ((Float, Float) -> Void)?
+        var cameraPanGesture: UIPanGestureRecognizer?
         private var lastTime: TimeInterval?
 
         init(scene: DesertScene) {
@@ -770,8 +1057,10 @@ struct GameSceneView: UIViewRepresentable {
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended,
-                  let scnView = gesture.view as? SCNView,
+                  let scnView = gesture.view as? GameSCNView,
                   !scene.isSleeping else { return }
+            scnView.claimKeyboardFocus()
+            guard scnView.pointerLookEnabled else { return }
             let point = gesture.location(in: scnView)
             let hits = scnView.hitTest(point, options: nil)
             for hit in hits {
@@ -779,6 +1068,10 @@ struct GameSceneView: UIViewRepresentable {
                 while let n = node {
                     if let npc = n as? NPCNode {
                         DispatchQueue.main.async { self.onNPCTapped?(npc) }
+                        return
+                    }
+                    if let animal = n as? AnimalNode {
+                        DispatchQueue.main.async { self.onAnimalTapped?(animal) }
                         return
                     }
                     if n.name == "sleep_bed" || n.name == "lobby_bed" {
@@ -796,70 +1089,287 @@ struct GameSceneView: UIViewRepresentable {
     }
 }
 
-// MARK: - Joystick
-
-struct JoystickView: View {
-    @Binding var offset: CGSize
-    /// dx = right, dy = forward (stick-up is positive).
-    var onMove: (Float, Float) -> Void
-
-    private let radius: CGFloat = 55
-    private let thumbRadius: CGFloat = 24
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(.black.opacity(0.3))
-                .frame(width: radius * 2, height: radius * 2)
-                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1.5))
-
-            Circle()
-                .fill(.white.opacity(0.5))
-                .frame(width: thumbRadius * 2, height: thumbRadius * 2)
-                .offset(clampedOffset)
+/// Captures hardware keyboard for Mac (Designed for iPad) and iPad keyboards.
+final class GameSCNView: SCNView {
+    var onKeyDown: ((GameHardwareKey) -> Void)?
+    var onKeyUp: ((GameHardwareKey) -> Void)?
+    var onCameraDrag: ((Float, Float) -> Void)?
+    /// When false (dialogue / sleep / pause), ignore pointer look deltas.
+    var pointerLookEnabled = true {
+        didSet {
+            if !pointerLookEnabled {
+                lastHoverPoint = nil
+            }
+            bindMouseLook()
+            if pointerLookEnabled {
+                PointerLockBridge.refresh()
+            }
         }
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { v in
-                    let clamped = clampToRadius(v.translation)
-                    offset = clamped
-                    let dx = Float(clamped.width / radius)
-                    let dy = Float(-clamped.height / radius) // screen-up → forward +
-                    onMove(dx, dy)
-                }
-                .onEnded { _ in
-                    offset = .zero
-                    onMove(0, 0)
-                }
-        )
     }
 
-    private var clampedOffset: CGSize {
-        clampToRadius(offset)
+    private var keyboardCaptureEnabled = true
+    private var heldKeys: Set<GameHardwareKey> = []
+    private var runKeyCount = 0
+    private var lastPanPoint: CGPoint?
+    private var lastHoverPoint: CGPoint?
+    private var mouseObservers: [NSObjectProtocol] = []
+
+    private let pointerLookSensitivity: Float = 0.0045
+    private let mouseLookSensitivity: Float = 0.0028
+
+    override var canBecomeFirstResponder: Bool { keyboardCaptureEnabled }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            if keyboardCaptureEnabled {
+                claimKeyboardFocus()
+            }
+            startMouseMonitoring()
+            bindMouseLook()
+        } else {
+            stopMouseMonitoring()
+        }
     }
 
-    private func clampToRadius(_ value: CGSize) -> CGSize {
-        let len = sqrt(value.width * value.width + value.height * value.height)
-        guard len > radius else { return value }
-        let scale = radius / len
-        return CGSize(width: value.width * scale, height: value.height * scale)
+    deinit {
+        stopMouseMonitoring()
+    }
+
+    func setKeyboardCaptureEnabled(_ enabled: Bool) {
+        keyboardCaptureEnabled = enabled
+        if enabled {
+            claimKeyboardFocus()
+        } else {
+            releaseAllKeys()
+            lastHoverPoint = nil
+            resignFirstResponder()
+        }
+    }
+
+    func claimKeyboardFocus() {
+        guard keyboardCaptureEnabled else { return }
+        _ = becomeFirstResponder()
+        if pointerLookEnabled {
+            PointerLockBridge.refresh()
+        }
+    }
+
+    private func startMouseMonitoring() {
+        guard mouseObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        mouseObservers = [
+            center.addObserver(forName: .GCMouseDidConnect, object: nil, queue: .main) { [weak self] _ in
+                self?.bindMouseLook()
+            },
+            center.addObserver(forName: .GCMouseDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+                self?.bindMouseLook()
+            },
+        ]
+        bindMouseLook()
+    }
+
+    private func stopMouseMonitoring() {
+        mouseObservers.forEach(NotificationCenter.default.removeObserver)
+        mouseObservers.removeAll()
+        GCMouse.mice().forEach { $0.mouseInput?.mouseMovedHandler = nil }
+    }
+
+    private func bindMouseLook() {
+        for mouse in GCMouse.mice() {
+            mouse.mouseInput?.mouseMovedHandler = { [weak self] (_: GCMouseInput, deltaX: Float, deltaY: Float) in
+                guard let self, self.pointerLookEnabled else { return }
+                let dx = deltaX * self.mouseLookSensitivity
+                let dy = deltaY * self.mouseLookSensitivity
+                if abs(dx) > 0.0001 || abs(dy) > 0.0001 {
+                    self.onCameraDrag?(dx, -dy)
+                }
+            }
+        }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var handled = false
+        for press in presses {
+            guard let mapped = mapKey(press.key) else { continue }
+            handled = true
+            beginKey(mapped)
+        }
+        if handled { return }
+        super.pressesBegan(presses, with: event)
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var handled = false
+        for press in presses {
+            guard let mapped = mapKey(press.key) else { continue }
+            handled = true
+            endKey(mapped)
+        }
+        if handled { return }
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var handled = false
+        for press in presses {
+            guard let mapped = mapKey(press.key) else { continue }
+            handled = true
+            endKey(mapped)
+        }
+        if handled { return }
+        super.pressesCancelled(presses, with: event)
+    }
+
+    @objc func handleCameraPan(_ gesture: UIPanGestureRecognizer) {
+        guard pointerLookEnabled else {
+            lastPanPoint = nil
+            return
+        }
+        switch gesture.state {
+        case .began:
+            lastPanPoint = gesture.translation(in: self)
+        case .changed:
+            let point = gesture.translation(in: self)
+            let last = lastPanPoint ?? point
+            let dx = Float(point.x - last.x) * 0.005
+            let dy = Float(point.y - last.y) * 0.004
+            lastPanPoint = point
+            onCameraDrag?(dx, -dy)
+        default:
+            lastPanPoint = nil
+        }
+    }
+
+    @objc func handleCameraHover(_ gesture: UIHoverGestureRecognizer) {
+        // Prefer GCMouse relative deltas while locked; hover is a fallback.
+        guard !PointerLockBridge.isSystemLocked else {
+            lastHoverPoint = nil
+            return
+        }
+        switch gesture.state {
+        case .began:
+            lastHoverPoint = gesture.location(in: self)
+        case .changed:
+            guard pointerLookEnabled else {
+                lastHoverPoint = gesture.location(in: self)
+                return
+            }
+            let point = gesture.location(in: self)
+            defer { lastHoverPoint = point }
+            guard let last = lastHoverPoint else { return }
+            let dx = Float(point.x - last.x) * pointerLookSensitivity
+            let dy = Float(point.y - last.y) * pointerLookSensitivity
+            if abs(dx) > 0.0001 || abs(dy) > 0.0001 {
+                onCameraDrag?(dx, -dy)
+            }
+        case .ended, .cancelled:
+            lastHoverPoint = nil
+        default:
+            break
+        }
+    }
+
+    private func beginKey(_ key: GameHardwareKey) {
+        if key == .run {
+            runKeyCount += 1
+            if runKeyCount == 1 {
+                heldKeys.insert(.run)
+                onKeyDown?(.run)
+            }
+            return
+        }
+        guard !heldKeys.contains(key) else { return }
+        heldKeys.insert(key)
+        onKeyDown?(key)
+    }
+
+    private func endKey(_ key: GameHardwareKey) {
+        if key == .run {
+            runKeyCount = max(0, runKeyCount - 1)
+            if runKeyCount == 0, heldKeys.remove(.run) != nil {
+                onKeyUp?(.run)
+            }
+            return
+        }
+        if heldKeys.remove(key) != nil {
+            onKeyUp?(key)
+        }
+    }
+
+    private func releaseAllKeys() {
+        let keys = heldKeys
+        heldKeys.removeAll()
+        runKeyCount = 0
+        for key in keys {
+            onKeyUp?(key)
+        }
+    }
+
+    private func mapKey(_ key: UIKey?) -> GameHardwareKey? {
+        guard let key else { return nil }
+        switch key.keyCode {
+        case .keyboardW, .keyboardUpArrow: return .moveForward
+        case .keyboardS, .keyboardDownArrow: return .moveBack
+        case .keyboardA, .keyboardLeftArrow: return .moveLeft
+        case .keyboardD, .keyboardRightArrow: return .moveRight
+        case .keyboardLeftShift, .keyboardRightShift, .keyboardR: return .run
+        case .keyboardSpacebar: return .jump
+        case .keyboardE: return .action
+        case .keyboardEscape: return .escape
+        default:
+            break
+        }
+        let chars = key.charactersIgnoringModifiers.lowercased()
+        switch chars {
+        case "w": return .moveForward
+        case "s": return .moveBack
+        case "a": return .moveLeft
+        case "d": return .moveRight
+        case "e": return .action
+        case "r": return .run
+        case " ": return .jump
+        default: return nil
+        }
     }
 }
 
 // MARK: - Action buttons
 
+private struct KeyCaptionBadge: View {
+    let label: String
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, label.count > 2 ? 5 : 0)
+            .frame(minWidth: 18, minHeight: 18)
+            .background(.black.opacity(0.72), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.35), lineWidth: 1))
+    }
+}
+
 struct TapActionButton: View {
     let systemName: String
+    var keyLabel: String? = nil
     var onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            Image(systemName: systemName)
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 64, height: 64)
-                .background(.black.opacity(0.38), in: Circle())
-                .overlay(Circle().stroke(.white.opacity(0.28), lineWidth: 1.5))
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: systemName)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 64, height: 64)
+                    .background(.black.opacity(0.38), in: Circle())
+                    .overlay(Circle().stroke(.white.opacity(0.28), lineWidth: 1.5))
+
+                if let keyLabel {
+                    KeyCaptionBadge(label: keyLabel)
+                        .offset(x: 6, y: -4)
+                }
+            }
         }
         .buttonStyle(.plain)
     }
@@ -867,28 +1377,36 @@ struct TapActionButton: View {
 
 struct HoldActionButton: View {
     let systemName: String
+    var keyLabel: String? = nil
     var isActive: Bool
     var activeColor: Color = .orange
     var onHoldChanged: (Bool) -> Void
 
     var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 22, weight: .bold))
-            .foregroundStyle(isActive ? .white : .white.opacity(0.9))
-            .frame(width: 64, height: 64)
-            .background(
-                (isActive ? activeColor.opacity(0.75) : Color.black.opacity(0.38)),
-                in: Circle()
-            )
-            .overlay(Circle().stroke(.white.opacity(isActive ? 0.55 : 0.28), lineWidth: 1.5))
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !isActive { onHoldChanged(true) }
-                    }
-                    .onEnded { _ in
-                        onHoldChanged(false)
-                    }
-            )
+        ZStack(alignment: .topTrailing) {
+            Image(systemName: systemName)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(isActive ? .white : .white.opacity(0.9))
+                .frame(width: 64, height: 64)
+                .background(
+                    (isActive ? activeColor.opacity(0.75) : Color.black.opacity(0.38)),
+                    in: Circle()
+                )
+                .overlay(Circle().stroke(.white.opacity(isActive ? 0.55 : 0.28), lineWidth: 1.5))
+
+            if let keyLabel {
+                KeyCaptionBadge(label: keyLabel)
+                    .offset(x: 6, y: -4)
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !isActive { onHoldChanged(true) }
+                }
+                .onEnded { _ in
+                    onHoldChanged(false)
+                }
+        )
     }
 }

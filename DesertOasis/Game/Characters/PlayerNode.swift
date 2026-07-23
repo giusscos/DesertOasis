@@ -74,4 +74,5 @@ enum PhysicsCategory {
     static let npc:    Int = 1 << 1
     static let item:   Int = 1 << 2
     static let terrain: Int = 1 << 3
+    static let animal: Int = 1 << 4
 }

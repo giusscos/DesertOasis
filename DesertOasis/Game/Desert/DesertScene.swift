@@ -9,6 +9,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private(set) var camp: CampNode!
     private(set) var camps: [CampNode] = []
     private(set) var npcs: [NPCNode] = []
+    private(set) var animals: [AnimalNode] = []
     private(set) var oases: [OasisInfo] = []
     private(set) var waterBodies: [OasisWaterNode] = []
     private var voxelWorld: VoxelWorld!
@@ -196,6 +197,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         rootNode.addChildNode(props)
 
         spawnNPCs(for: camp)
+        spawnAnimals(for: camp)
+        spawnWildAnimals()
         setupPlayer(slot: slot)
         tearDownOverviewCamera()
         setupCamera()
@@ -716,6 +719,118 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         }
     }
 
+    // MARK: - Animals
+
+    private func spawnAnimals(for campNode: CampNode?) {
+        guard let campNode else { return }
+        var rng = SeededRandom(seed: worldSeed &+ 55_321 &+ Self.stableSeed(campNode.site.id))
+        let cx = campNode.position.x
+        let cz = campNode.position.z
+
+        let kinds: [AnimalKind]
+        if campNode.site.isHome {
+            kinds = [.camel, .goat, .goat, .lizard, .bird]
+        } else {
+            kinds = [.goat, .lizard]
+        }
+
+        for kind in kinds {
+            let spot = randomCampSpot(aroundX: cx, aroundZ: cz, rng: &rng) { wx, wz in
+                campNode.isInsideTent(worldX: wx, worldZ: wz)
+            } ?? (cx + 5 + rng.nextFloat() * 2, cz - 3)
+            placeAnimal(kind: kind, x: spot.0, z: spot.1, campNode: campNode)
+        }
+    }
+
+    private func spawnWildAnimals() {
+        var rng = SeededRandom(seed: worldSeed &+ 77_777)
+        let half = voxelWorld.totalSize * 0.5
+
+        // Camels — open sand, away from home
+        for _ in 0..<4 {
+            guard let (wx, wz) = randomWildSpot(rng: &rng, half: half, minDistFromHome: 35) else { continue }
+            placeAnimal(kind: .camel, x: wx, z: wz, campNode: nil, wanderOverride: 12)
+        }
+
+        // Goats — mid desert
+        for _ in 0..<5 {
+            guard let (wx, wz) = randomWildSpot(rng: &rng, half: half, minDistFromHome: 28) else { continue }
+            placeAnimal(kind: .goat, x: wx, z: wz, campNode: nil, wanderOverride: 8)
+        }
+
+        // Lizards — scattered sand
+        for _ in 0..<6 {
+            guard let (wx, wz) = randomWildSpot(rng: &rng, half: half, minDistFromHome: 18) else { continue }
+            placeAnimal(kind: .lizard, x: wx, z: wz, campNode: nil, wanderOverride: 4)
+        }
+
+        // Birds — prefer oasis rings
+        if oases.isEmpty {
+            for _ in 0..<3 {
+                guard let (wx, wz) = randomWildSpot(rng: &rng, half: half, minDistFromHome: 20) else { continue }
+                placeAnimal(kind: .bird, x: wx, z: wz, campNode: nil, wanderOverride: 12)
+            }
+        } else {
+            for oasis in oases {
+                let count = 1 + Int(rng.nextFloat() * 2)
+                for _ in 0..<count {
+                    let angle = rng.nextFloat() * Float.pi * 2
+                    let dist = oasis.radius * 0.85 + rng.nextFloat() * oasis.radius * 0.6
+                    let wx = oasis.position.x + cos(angle) * dist
+                    let wz = oasis.position.z + sin(angle) * dist
+                    placeAnimal(kind: .bird, x: wx, z: wz, campNode: nil, wanderOverride: 11)
+                }
+            }
+        }
+    }
+
+    private func randomWildSpot(rng: inout SeededRandom,
+                                half: Float,
+                                minDistFromHome: Float) -> (Float, Float)? {
+        for _ in 0..<40 {
+            let wx = rng.nextFloat() * voxelWorld.totalSize - half
+            let wz = rng.nextFloat() * voxelWorld.totalSize - half
+            let distHome = sqrt(wx * wx + wz * wz)
+            if distHome < minDistFromHome { continue }
+            if camps.contains(where: {
+                let dx = $0.position.x - wx
+                let dz = $0.position.z - wz
+                return dx * dx + dz * dz < ($0.site.padRadius + 4) * ($0.site.padRadius + 4)
+            }) { continue }
+            return (wx, wz)
+        }
+        return nil
+    }
+
+    private func placeAnimal(kind: AnimalKind,
+                             x: Float,
+                             z: Float,
+                             campNode: CampNode?,
+                             wanderOverride: Float? = nil) {
+        let h = groundY(x: x, z: z)
+        let animal = AnimalNode(kind: kind, position: SCNVector3(x, h, z))
+        let padLimit = (campNode?.site.padRadius ?? 999) - 1
+        let cx = campNode?.position.x ?? x
+        let cz = campNode?.position.z ?? z
+
+        animal.configureWander(radius: wanderOverride, groundY: { [weak self] wx, wz in
+            self?.groundY(x: wx, z: wz) ?? 0
+        }, isBlocked: { [weak self] wx, wz in
+            guard let self else { return true }
+            if self.camps.contains(where: { $0.isInsideTent(worldX: wx, worldZ: wz) }) {
+                return true
+            }
+            if campNode != nil {
+                let dx = wx - cx
+                let dz = wz - cz
+                if sqrt(dx * dx + dz * dz) > padLimit { return true }
+            }
+            return false
+        })
+        rootNode.addChildNode(animal)
+        animals.append(animal)
+    }
+
     /// Deterministic non-trapping seed from a string (hashValue can be negative → UInt64() traps).
     private static func stableSeed(_ string: String) -> UInt64 {
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325
@@ -736,12 +851,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             let wx = aroundX + cos(angle) * dist
             let wz = aroundZ + sin(angle) * dist
             if isBlocked(wx, wz) { continue }
-            let tooClose = npcs.contains {
+            let tooCloseNPC = npcs.contains {
                 let dx = $0.position.x - wx
                 let dz = $0.position.z - wz
                 return dx * dx + dz * dz < 2.8 * 2.8
             }
-            if tooClose { continue }
+            if tooCloseNPC { continue }
+            let tooCloseAnimal = animals.contains {
+                let dx = $0.position.x - wx
+                let dz = $0.position.z - wz
+                return dx * dx + dz * dz < 2.2 * 2.2
+            }
+            if tooCloseAnimal { continue }
             return (wx, wz)
         }
         return nil
@@ -838,6 +959,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
         applyMovement(deltaTime: dt)
         updateNPCs(deltaTime: dt)
+        updateAnimals(deltaTime: dt)
         updateWater(deltaTime: dt)
         updateTools()
         checkProximity()
@@ -857,6 +979,12 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private func updateNPCs(deltaTime: Float) {
         for npc in npcs {
             npc.updateWander(deltaTime: deltaTime)
+        }
+    }
+
+    private func updateAnimals(deltaTime: Float) {
+        for animal in animals {
+            animal.updateWander(deltaTime: deltaTime)
         }
     }
 
@@ -1333,6 +1461,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
         case .finish(let site, let node):
             spawnNPCs(for: node)
+            spawnAnimals(for: node)
 
             let newOases = generator.placeAndCarveOases(
                 into: voxelWorld, nearSites: [site], oasisCount: 1
