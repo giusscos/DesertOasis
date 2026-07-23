@@ -1323,8 +1323,10 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     // MARK: - Sleep / skip night
 
     /// Timelapse: camera looks at sunset over the camping zone, then wakes at morning.
+    /// Only starts during dusk/night (`DayNightCycle.isDuskOrNight`).
     func beginSleep(completion: (() -> Void)? = nil) {
-        guard !isSleeping, let playerNode, let sleepCamp = nearestCampWithBed ?? camp else { return }
+        guard !isSleeping, dayNight.isDuskOrNight,
+              let playerNode, let sleepCamp = nearestCampWithBed ?? camp else { return }
         isSleeping = true
         moveInput = .zero
         playerNode.setWalking(false)
@@ -1347,11 +1349,6 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         rootNode.addChildNode(cam)
         sleepCameraNode = cam
         cameraArmNode.isHidden = true
-
-        // Start near dusk if daytime, otherwise keep current evening/night.
-        if dayNight.timeOfDay > 0.28 && dayNight.timeOfDay < 0.68 {
-            dayNight.setTimeOfDay(0.70)
-        }
 
         let totalAdvance = dayNight.fractionUntilMorning()
         let duration: TimeInterval = 5.2

@@ -32,6 +32,7 @@ final class PlayerNode: SCNNode {
         }
         guard walking != isWalking else { return }
         isWalking = walking
+        notifyWalkAudio(walking)
         if walking {
             VoxelAnim.playWalk(on: characterNode)
         } else {
@@ -41,6 +42,7 @@ final class PlayerNode: SCNNode {
 
     func playJumpAnimation() {
         isAirborne = true
+        notifyWalkAudio(false)
         VoxelAnim.playJump(on: characterNode)
     }
 
@@ -49,8 +51,16 @@ final class PlayerNode: SCNNode {
         isAirborne = false
         if isWalking {
             VoxelAnim.playWalk(on: characterNode)
+            notifyWalkAudio(true)
         } else {
             VoxelAnim.playIdle(on: characterNode)
+            notifyWalkAudio(false)
+        }
+    }
+
+    private func notifyWalkAudio(_ walking: Bool) {
+        Task { @MainActor in
+            AudioManager.shared.setWalking(walking)
         }
     }
 

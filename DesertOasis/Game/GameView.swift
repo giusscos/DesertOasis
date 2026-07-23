@@ -102,8 +102,13 @@ struct GameView: View {
         }
         if isNearBarrel { return .deliver }
         if isNearWater && !carryingWater { return .collect }
-        if isNearBed && !carryingWater { return .sleep }
+        if isNearBed && !carryingWater && canSleepNow { return .sleep }
         return nil
+    }
+
+    /// Sleep is offered from late dusk through night (before dawn).
+    private var canSleepNow: Bool {
+        timeOfDay > 0.68 || timeOfDay < 0.22
     }
 
     var slot: SaveSlot { gameManager.saveSlots[slotIndex] }
@@ -330,6 +335,7 @@ struct GameView: View {
         }
         .onDisappear {
             PointerLockBridge.wantsLock = false
+            AudioManager.shared.setWalking(false)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIPointerLockState.didChangeNotification)) { _ in
             // Re-assert preference after system evaluates click / fullscreen requirements.
@@ -340,6 +346,7 @@ struct GameView: View {
         .onChange(of: dialogueManager.isVisible) { _, visible in
             desertScene.isInputBlocked = visible
             if visible {
+                AudioManager.shared.play(.dialogue)
                 clearKeyboardMovement()
                 if isPaused { isPaused = false }
                 if isShowingSettings { isShowingSettings = false }
@@ -697,6 +704,7 @@ struct GameView: View {
 
         desertScene.onWaterCollected = {
             carryingWater = true
+            AudioManager.shared.play(.collect)
             gameManager.updateProgress(
                 slotIndex: slotIndex,
                 waterFound: slot.waterFound + 1,
@@ -710,6 +718,7 @@ struct GameView: View {
         desertScene.onWaterDelivered = { level, unlockedCompass, unlockedDetector, campId in
             carryingWater = false
             isNearBarrel = false
+            AudioManager.shared.play(.deliver)
             if campId == "home" || desertScene.camp?.site.id == campId {
                 campWaterLevel = level
             }
@@ -913,11 +922,15 @@ struct GameView: View {
 
     private func handleBedTap() {
         guard !isLoadingWorld, !isSleeping, isNearBed else { return }
+        guard canSleepNow else {
+            showToast("Too early to sleep — wait until dusk.")
+            return
+        }
         startSleep()
     }
 
     private func startSleep() {
-        guard !isSleeping else { return }
+        guard !isSleeping, canSleepNow else { return }
         withAnimation { isSleeping = true }
         desertScene.beginSleep()
     }
@@ -938,8 +951,10 @@ struct GameView: View {
                 .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1.5))
                 .shadow(radius: 4)
 
-                KeyCaptionBadge(label: "E")
-                    .offset(x: 6, y: -4)
+                if !showsOnScreenJoystick {
+                    KeyCaptionBadge(label: "E")
+                        .offset(x: 6, y: -4)
+                }
             }
         }
         .buttonStyle(.plain)
@@ -955,6 +970,7 @@ struct GameView: View {
     }
 
     private func showToast(_ message: String) {
+        AudioManager.shared.play(.toast)
         withAnimation { toastMessage = message }
         Task {
             try? await Task.sleep(for: .seconds(2.8))

@@ -184,6 +184,7 @@ struct SlotSelectionOverlayView: View {
 
                 HStack(spacing: 12) {
                     Button {
+                        AudioManager.shared.play(.uiTap)
                         gameManager.musicEnabled.toggle()
                         gameManager.persistSettings()
                     } label: {
@@ -443,7 +444,10 @@ struct SettingsOverlayView: View {
             Spacer()
             Toggle("", isOn: isOn)
                 .tint(.orange)
-                .onChange(of: isOn.wrappedValue) { _, _ in gameManager.persistSettings() }
+                .onChange(of: isOn.wrappedValue) { _, _ in
+                    AudioManager.shared.play(.uiTap)
+                    gameManager.persistSettings()
+                }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
