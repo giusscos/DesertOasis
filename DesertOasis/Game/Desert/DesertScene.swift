@@ -38,6 +38,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var sunNode: SCNNode!
     private var ambientLightNode: SCNNode!
     private var skyNode: SCNNode!
+    private let skyCelestials = SkyCelestials()
+    private var skyDetailsEnabled = true
     private(set) var isSleeping = false
     private var sleepCameraNode: SCNNode?
 
@@ -122,6 +124,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         setupLighting()
         setupSky()
         setupSandHaze()
+        skyCelestials.attach(to: rootNode, sunLightNode: sunNode)
+        skyCelestials.setEnabled(skyDetailsEnabled)
         dayNight.attach(scene: self, sun: sunNode, ambient: ambientLightNode, sky: skyNode)
 
         voxelWorld = VoxelWorld(seed: slot.desertSeed)
@@ -990,7 +994,19 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         // Keep sky dome centered on player so it never clips at the horizon.
         if let playerNode {
             skyNode?.position = SCNVector3(playerNode.position.x, 0, playerNode.position.z)
+            skyCelestials.update(
+                playerPosition: playerNode.position,
+                daylightFactor: dayNight.daylightFactor,
+                skyColor: dayNight.currentSkyColor,
+                deltaTime: dt
+            )
         }
+    }
+
+    /// Toggles visible sun, moon, and clouds (performance setting).
+    func setSkyDetailsEnabled(_ enabled: Bool) {
+        skyDetailsEnabled = enabled
+        skyCelestials.setEnabled(enabled)
     }
 
     private func updateNPCs(deltaTime: Float) {
@@ -1369,6 +1385,14 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             guard let self else { timer.invalidate(); return }
             step += 1
             self.dayNight.advance(by: advancePerStep)
+            if let player = self.playerNode {
+                self.skyCelestials.update(
+                    playerPosition: player.position,
+                    daylightFactor: self.dayNight.daylightFactor,
+                    skyColor: self.dayNight.currentSkyColor,
+                    deltaTime: Float(stepDt)
+                )
+            }
             // Gentle camera drift during timelapse
             if let sleepCam = self.sleepCameraNode {
                 sleepCam.position.x -= 0.04

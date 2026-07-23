@@ -361,8 +361,12 @@ struct GameView: View {
                 isShowingSettings = false
             }
         }
+        .onChange(of: gameManager.skyDetailsEnabled) { _, enabled in
+            desertScene.setSkyDetailsEnabled(enabled)
+        }
         .onAppear {
             PointerLockBridge.wantsLock = isPointerLockedGameplay
+            desertScene.setSkyDetailsEnabled(gameManager.skyDetailsEnabled)
             guard !sceneBuilt else { return }
             sceneBuilt = true
             carryingWater = slot.isCarryingWater

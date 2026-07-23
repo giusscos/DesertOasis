@@ -46,7 +46,8 @@ struct LobbyContainerView: View {
         case .settings:
             SettingsOverlayView(
                 gameManager: gameManager,
-                onBack: moveToSlots
+                onBack: moveToTitle,
+                onGoToBed: moveToSlots
             )
         }
     }
@@ -210,15 +211,21 @@ struct SlotSelectionOverlayView: View {
             Spacer()
 
             // Slot cards
-            VStack(spacing: 8) {
-                Text("Choose Your Adventure")
-                    .font(.system(size: 14, weight: .semibold, design: .serif))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .shadow(color: .black, radius: 3)
+            VStack(spacing: 14) {
+                VStack(spacing: 4) {
+                    Text("Choose Your Adventure")
+                        .font(.system(size: 18, weight: .bold, design: .serif))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.7), radius: 4)
+                    Text("Open a diary on the bed")
+                        .font(.system(size: 12, weight: .medium, design: .serif))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .shadow(color: .black.opacity(0.6), radius: 3)
+                }
 
-                HStack(spacing: 12) {
+                HStack(alignment: .bottom, spacing: 10) {
                     ForEach(0..<3) { idx in
-                        SlotCardView(slot: gameManager.saveSlots[idx]) {
+                        SlotCardView(slot: gameManager.saveSlots[idx], slotIndex: idx) {
                             onSlotSelected(idx)
                         } onDelete: {
                             deleteIndex = idx
@@ -226,9 +233,9 @@ struct SlotSelectionOverlayView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 14)
             }
-            .padding(.bottom, 16)
+            .padding(.bottom, 20)
         }
         .alert("Delete Save?", isPresented: $showDeleteConfirm, presenting: deleteIndex) { idx in
             Button("Delete", role: .destructive) { gameManager.deleteSlot(idx) }
@@ -243,65 +250,163 @@ struct SlotSelectionOverlayView: View {
 
 struct SlotCardView: View {
     let slot: SaveSlot
+    let slotIndex: Int
     var onSelect: () -> Void
     var onDelete: () -> Void
 
+    private var accent: Color { Color(red: 0.92, green: 0.75, blue: 0.30) }
+    private var panelFill: Color { Color(red: 0.08, green: 0.06, blue: 0.04).opacity(0.78) }
+
+    private var journalLabel: String {
+        ["I", "II", "III"][slotIndex]
+    }
+
     var body: some View {
         Button(action: onSelect) {
-            VStack(spacing: 6) {
+            VStack(spacing: 0) {
                 if slot.isEmpty {
-                    Image(systemName: "plus.circle.dashed")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.white.opacity(0.6))
-                    Text("New Game")
-                        .font(.system(size: 12, weight: .medium, design: .serif))
-                        .foregroundStyle(.white.opacity(0.7))
+                    emptyContent
                 } else {
-                    Text(slot.characterGender?.emoji ?? "")
-                        .font(.system(size: 28))
-                    Text(slot.displayName)
-                        .font(.system(size: 11, weight: .bold, design: .serif))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-
-                    VStack(spacing: 2) {
-                        statRow(icon: "drop.fill", value: "\(slot.waterFound)")
-                        statRow(icon: "sun.max.fill", value: "\(slot.oasisFound)")
-                        statRow(icon: "checkmark.circle", value: "\(slot.tasksCompleted)")
-                    }
-
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.caption2)
-                            .foregroundStyle(.red.opacity(0.7))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 2)
+                    filledContent
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(.black.opacity(0.55))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(slot.isEmpty ? .white.opacity(0.2) : .white.opacity(0.4), lineWidth: 1)
-                    )
-            )
+            .frame(minHeight: 168)
+            .background(cardBackground)
         }
         .buttonStyle(.plain)
     }
 
-    private func statRow(icon: String, value: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 8))
-            Text(value)
-                .font(.system(size: 10))
+    private var emptyContent: some View {
+        VStack(spacing: 12) {
+            Text("JOURNAL \(journalLabel)")
+                .font(.system(size: 10, weight: .bold, design: .serif))
+                .tracking(1.6)
+                .foregroundStyle(accent.opacity(0.75))
+
+            ZStack {
+                Circle()
+                    .strokeBorder(accent.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    .frame(width: 52, height: 52)
+                Image(systemName: "plus")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(accent)
+            }
+
+            VStack(spacing: 3) {
+                Text("New Journey")
+                    .font(.system(size: 14, weight: .bold, design: .serif))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("Blank pages await")
+                    .font(.system(size: 11, design: .serif))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
         }
-        .foregroundStyle(.white.opacity(0.7))
+        .padding(.vertical, 18)
+        .padding(.horizontal, 10)
+    }
+
+    private var filledContent: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("JOURNAL \(journalLabel)")
+                    .font(.system(size: 10, weight: .bold, design: .serif))
+                    .tracking(1.6)
+                    .foregroundStyle(accent.opacity(0.85))
+                Spacer()
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .padding(7)
+                        .background(.white.opacity(0.08), in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            ZStack {
+                Circle()
+                    .fill(accent.opacity(0.18))
+                    .frame(width: 46, height: 46)
+                Circle()
+                    .strokeBorder(accent.opacity(0.55), lineWidth: 1.5)
+                    .frame(width: 46, height: 46)
+                Image(systemName: genderSymbol)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(accent)
+            }
+
+            VStack(spacing: 2) {
+                Text(travelerLabel)
+                    .font(.system(size: 13, weight: .bold, design: .serif))
+                    .foregroundStyle(.white)
+                Text(slot.displayName)
+                    .font(.system(size: 10, weight: .medium, design: .serif))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+
+            HStack(spacing: 5) {
+                slotStatBadge(icon: "drop.fill", value: slot.waterFound, color: Color(red: 0.35, green: 0.72, blue: 0.95))
+                slotStatBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
+                slotStatBadge(icon: "checkmark.circle.fill", value: slot.tasksCompleted, color: Color(red: 0.35, green: 0.82, blue: 0.52))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 12)
+        .padding(.bottom, 14)
+    }
+
+    private var travelerLabel: String {
+        switch slot.characterGender {
+        case .man: "Wanderer"
+        case .woman: "Explorer"
+        case .none: "Traveler"
+        }
+    }
+
+    private var genderSymbol: String {
+        switch slot.characterGender {
+        case .man: "figure.stand"
+        case .woman: "figure.stand.dress"
+        case .none: "person.fill"
+        }
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(panelFill)
+            .overlay {
+                if slot.isEmpty {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(accent.opacity(0.28), lineWidth: 1)
+                } else {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            LinearGradient(
+                                colors: [accent.opacity(0.55), accent.opacity(0.18)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.25
+                        )
+                }
+            }
+            .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+    }
+
+    private func slotStatBadge(icon: String, value: Int, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+            Text("\(value)")
+                .foregroundStyle(.white)
+        }
+        .font(.system(size: 10, weight: .bold))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(.black.opacity(0.45), in: Capsule())
     }
 }
 
@@ -368,6 +473,8 @@ struct CharacterSelectionOverlayView: View {
 struct SettingsOverlayView: View {
     @Bindable var gameManager: GameManager
     var onBack: () -> Void
+    /// When set (lobby), shows a bed button opposite the chevron to move the camera to slot selection.
+    var onGoToBed: (() -> Void)? = nil
     /// When set (game view only), shows a button to leave the run and return to the title screen.
     var onReturnToMainScreen: (() -> Void)? = nil
 
@@ -382,6 +489,15 @@ struct SettingsOverlayView: View {
                         .background(.black.opacity(0.4), in: Circle())
                 }
                 Spacer()
+                if let onGoToBed {
+                    Button(action: onGoToBed) {
+                        Image(systemName: "bed.double.fill")
+                            .font(.title2)
+                            .foregroundStyle(.white)
+                            .padding(12)
+                            .background(.black.opacity(0.4), in: Circle())
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
@@ -397,6 +513,7 @@ struct SettingsOverlayView: View {
                 VStack(spacing: 1) {
                     settingRow(title: "Music", icon: "music.note", isOn: $gameManager.musicEnabled)
                     settingRow(title: "Sound Effects", icon: "speaker.wave.2", isOn: $gameManager.soundEnabled)
+                    settingRow(title: "Sky Details", icon: "cloud.sun", isOn: $gameManager.skyDetailsEnabled)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 14))
 

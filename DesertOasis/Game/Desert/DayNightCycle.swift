@@ -8,6 +8,8 @@ final class DayNightCycle {
     var dayLengthSeconds: Float = 600
     /// Current time of day in [0, 1).
     private(set) var timeOfDay: Float = 0.32
+    /// Latest sky background color from the palette (for celestial tinting).
+    private(set) var currentSkyColor: UIColor = UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
 
     private weak var sunNode: SCNNode?
     private weak var ambientNode: SCNNode?
@@ -97,6 +99,7 @@ final class DayNightCycle {
         if let skyMaterial {
             skyMaterial.diffuse.contents = sample.skyColor
         }
+        currentSkyColor = sample.skyColor
         scene?.background.contents = sample.skyColor
         scene?.fogColor = sample.fogColor
     }

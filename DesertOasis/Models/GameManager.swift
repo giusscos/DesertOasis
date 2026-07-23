@@ -15,10 +15,13 @@ final class GameManager {
     var saveSlots: [SaveSlot] = [SaveSlot(id: 0), SaveSlot(id: 1), SaveSlot(id: 2)]
     var musicEnabled: Bool = true
     var soundEnabled: Bool = true
+    /// Visible sun, moon, and clouds — disable for weaker devices.
+    var skyDetailsEnabled: Bool = true
 
     private let slotsKey = "DesertOasis_SaveSlots"
     private let musicKey = "DesertOasis_Music"
     private let soundKey = "DesertOasis_Sound"
+    private let skyDetailsKey = "DesertOasis_SkyDetails"
 
     init() {
         loadAll()
@@ -29,6 +32,7 @@ final class GameManager {
     private func loadAll() {
         musicEnabled = UserDefaults.standard.object(forKey: musicKey) as? Bool ?? true
         soundEnabled = UserDefaults.standard.object(forKey: soundKey) as? Bool ?? true
+        skyDetailsEnabled = UserDefaults.standard.object(forKey: skyDetailsKey) as? Bool ?? true
         guard let data = UserDefaults.standard.data(forKey: slotsKey),
               let slots = try? JSONDecoder().decode([SaveSlot].self, from: data)
         else { return }
@@ -43,6 +47,7 @@ final class GameManager {
     func persistSettings() {
         UserDefaults.standard.set(musicEnabled, forKey: musicKey)
         UserDefaults.standard.set(soundEnabled, forKey: soundKey)
+        UserDefaults.standard.set(skyDetailsEnabled, forKey: skyDetailsKey)
     }
 
     // MARK: - Slot actions
