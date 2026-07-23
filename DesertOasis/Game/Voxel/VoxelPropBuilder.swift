@@ -635,6 +635,133 @@ enum VoxelPropBuilder {
         return root
     }
 
+    // MARK: - Neighbour tent furniture
+
+    static func woodenCrate() -> SCNNode {
+        let s = VoxelSculpture(sizeX: 10, sizeY: 10, sizeZ: 10,
+                               origin: SIMD3<Float>(-5, 0, -5) * uf)
+        // Plank walls
+        s.fillBox(x0: 0, y0: 0, z0: 0, x1: 9, y1: 9, z1: 9, type: .wood)
+        // Hollow interior (open top crate)
+        s.fillBox(x0: 1, y0: 1, z0: 1, x1: 8, y1: 9, z1: 8, type: .air)
+        // Dark corner posts
+        for x in [0, 9] {
+            for z in [0, 9] {
+                for y in 0...9 { s.set(x, y, z, .darkWood) }
+            }
+        }
+        // Iron bands around mid and lower sections
+        for y in [3, 7] {
+            for x in 0...9 {
+                s.set(x, y, 0, .iron)
+                s.set(x, y, 9, .iron)
+            }
+            for z in 1...8 {
+                s.set(0, y, z, .iron)
+                s.set(9, y, z, .iron)
+            }
+        }
+        return s.makeNode(name: "prop_crate")
+    }
+
+    static func sandals() -> SCNNode {
+        let root = SCNNode()
+        root.name = "prop_sandals"
+        for (side, yaw) in [(-1, Float(0.2)), (1, Float(-0.15))] {
+            let s = VoxelSculpture(sizeX: 6, sizeY: 2, sizeZ: 10,
+                                   origin: SIMD3<Float>(-3, 0, -5) * uf)
+            s.fillEllipsoid(cx: 3, cy: 0.5, cz: 5, rx: 2.5, ry: 0.7, rz: 4.2, type: .darkWood)
+            // Toe strap
+            for x in 0...5 { s.set(x, 1, 2, .cloth) }
+            let node = s.makeNode(name: "sandal")
+            node.position = SCNVector3(Float(side) * 0.28, 0, 0)
+            node.eulerAngles.y = yaw
+            root.addChildNode(node)
+        }
+        return root
+    }
+
+    static func sleepingRoll() -> SCNNode {
+        // Rolled blanket lying on its side (~1 m long, 0.5 m diameter)
+        let s = VoxelSculpture(sizeX: 16, sizeY: 8, sizeZ: 8,
+                               origin: SIMD3<Float>(-8, 0, -4) * uf)
+        s.fillCylinder(axis: .x, c0: 4, c1: 4, a0: 0, a1: 15, radius: 3.5, type: .canvas)
+        // Binding straps as dark rings
+        for sx in [4, 11] {
+            for y in 0...7 {
+                for z in 0...7 {
+                    let dy = Float(y) + 0.5 - 4.0
+                    let dz = Float(z) + 0.5 - 4.0
+                    let d2 = dy * dy + dz * dz
+                    if d2 <= 14.0 && d2 >= 9.0 { s.set(sx, y, z, .darkWood) }
+                }
+            }
+        }
+        return s.makeNode(name: "prop_sleeping_roll") { type in
+            type == .canvas ? UIColor(red: 0.62, green: 0.52, blue: 0.35, alpha: 1) : type.color
+        }
+    }
+
+    static func knapsack() -> SCNNode {
+        let s = VoxelSculpture(sizeX: 12, sizeY: 14, sizeZ: 8,
+                               origin: SIMD3<Float>(-6, 0, -4) * uf)
+        // Main body
+        s.fillEllipsoid(cx: 6, cy: 6, cz: 4, rx: 5.0, ry: 5.5, rz: 3.2, type: .canvas)
+        // Leather top flap
+        s.fillBox(x0: 2, y0: 11, z0: 1, x1: 9, y1: 12, z1: 6, type: .darkWood)
+        // Iron buckles
+        s.set(4, 12, 3, .iron)
+        s.set(7, 12, 3, .iron)
+        // Strap rings at base
+        s.set(3, 1, 7, .iron)
+        s.set(8, 1, 7, .iron)
+        return s.makeNode(name: "prop_knapsack") { type in
+            if type == .canvas { return UIColor(red: 0.58, green: 0.47, blue: 0.28, alpha: 1) }
+            if type == .darkWood { return UIColor(red: 0.38, green: 0.25, blue: 0.14, alpha: 1) }
+            return type.color
+        }
+    }
+
+    /// Populates a neighbour tent with realistic camping items (tent-local coordinates).
+    /// Entrance faces +Z; bed goes on the left wall, extras on the right.
+    static func furnishNeighbourTent(_ tent: SCNNode, index: Int) {
+        let bed = lobbyBed()
+        bed.name = "neighbour_bed_\(index)"
+        bed.position = SCNVector3(-2.45, 0, -0.7)
+        for i in 0..<3 {
+            bed.childNode(withName: "diary_\(i)", recursively: true)?.isHidden = true
+        }
+        tent.addChildNode(bed)
+
+        let shoes = sandals()
+        shoes.position = SCNVector3(0.3, 0, 2.8)
+        shoes.eulerAngles.y = 0.18
+        tent.addChildNode(shoes)
+
+        switch index % 3 {
+        case 0:
+            let crate = woodenCrate()
+            crate.position = SCNVector3(2.2, 0, -2.5)
+            tent.addChildNode(crate)
+
+            let pack = knapsack()
+            pack.position = SCNVector3(2.2, 0.65, -1.8)
+            pack.eulerAngles.y = -0.4
+            tent.addChildNode(pack)
+
+        case 1:
+            let roll = sleepingRoll()
+            roll.position = SCNVector3(1.5, 0, -1.8)
+            roll.eulerAngles.y = 0.3
+            tent.addChildNode(roll)
+
+        default:
+            let crate = woodenCrate()
+            crate.position = SCNVector3(2.2, 0, -2.2)
+            tent.addChildNode(crate)
+        }
+    }
+
     // MARK: - Scatter into desert
 
     static func scatterProps(world: VoxelWorld, oases: [OasisInfo], seed: UInt64,

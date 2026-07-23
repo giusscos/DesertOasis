@@ -21,6 +21,8 @@ struct SaveSlot: Codable, Identifiable {
     var timeOfDay: Float
     /// Per-camp water + oasis growth.
     var campProgress: [CampProgress]
+    /// Mission tracking — persisted across sessions.
+    var missions: [MissionRecord]
 
     var isEmpty: Bool { characterGender == nil }
 
@@ -48,6 +50,7 @@ struct SaveSlot: Codable, Identifiable {
         playerPositionZ = 0
         timeOfDay = 0.32
         campProgress = [CampProgress.home(from: 0)]
+        missions = []
     }
 
     static func timestampName(from date: Date) -> String {
@@ -102,7 +105,7 @@ struct SaveSlot: Codable, Identifiable {
         case campWaterLevel, waterDeliveries, isCarryingWater
         case hasWaterCompass, hasWaterDetector
         case desertSeed, playerPositionX, playerPositionZ
-        case timeOfDay, campProgress
+        case timeOfDay, campProgress, missions
     }
 
     init(from decoder: Decoder) throws {
@@ -129,5 +132,6 @@ struct SaveSlot: Codable, Identifiable {
         if !campProgress.contains(where: { $0.id == "home" }) {
             campProgress.insert(CampProgress.home(from: campWaterLevel), at: 0)
         }
+        missions = try c.decodeIfPresent([MissionRecord].self, forKey: .missions) ?? []
     }
 }

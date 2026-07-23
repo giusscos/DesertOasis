@@ -30,6 +30,13 @@ struct GameView: View {
     @State private var timeOfDay: Float = 0.32
     @State private var pressedKeys: Set<GameKey> = []
     @State private var runSources: Set<RunSource> = []
+    @State private var missionManager = MissionManager()
+    @State private var isShowingMissions = false
+    @State private var isShowingIntro = false
+    @State private var pendingMissionOffer: MissionDefinition? = nil
+    @State private var deniedMissionOffers: Set<String> = []
+    @State private var worldReady = false
+    @State private var callbacksWired = false
 
     private enum GameKey: Hashable {
         case moveForward, moveBack, moveLeft, moveRight
@@ -41,12 +48,12 @@ struct GameView: View {
 
     /// Playing with hidden, confined cursor.
     private var isPointerLockedGameplay: Bool {
-        !isLoadingWorld && !isSleeping && !isPaused && !isShowingSettings && !dialogueManager.isVisible
+        !isLoadingWorld && !isSleeping && !isPaused && !isShowingSettings && !isShowingMissions && !isShowingIntro && !dialogueManager.isVisible
     }
 
     /// Keyboard capture (includes pause so Esc can resume).
     private var acceptsKeyboardInput: Bool {
-        !isLoadingWorld && !isSleeping && !dialogueManager.isVisible
+        !isLoadingWorld && !isSleeping && !dialogueManager.isVisible && !isShowingIntro
     }
 
     /// Virtual stick for phones/iPads; Mac uses WASD instead.
@@ -108,6 +115,7 @@ struct GameView: View {
                 scene: desertScene,
                 acceptsKeyboard: acceptsKeyboardInput,
                 pointerLookEnabled: isPointerLockedGameplay,
+                showsJoystick: showsOnScreenJoystick,
                 onNPCTapped: handleNPCTap,
                 onAnimalTapped: handleAnimalTap,
                 onBedTapped: handleBedTap,
@@ -125,7 +133,7 @@ struct GameView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(!isLoadingWorld && !isSleeping)
 
-            if isLoadingWorld {
+            if isLoadingWorld, !isShowingIntro {
                 WorldLoadingOverlay(progress: loadProgress)
                     .transition(.opacity)
                     .zIndex(10)
@@ -160,6 +168,43 @@ struct GameView: View {
                 )
                 .transition(.opacity)
                 .zIndex(12)
+            }
+
+            // Missions list overlay
+            if isShowingMissions, !isLoadingWorld, !isSleeping {
+                MissionsOverlayView(
+                    missionManager: missionManager,
+                    onBack: { setShowingMissions(false) }
+                )
+                .transition(.opacity)
+                .zIndex(12)
+            }
+
+            // NPC mission offer card — floats above dialogue when an NPC proposes a mission
+            if let offer = pendingMissionOffer, !isLoadingWorld {
+                MissionOfferView(
+                    mission: offer,
+                    onAccept: {
+                        missionManager.unlock(offer.id)
+                        saveMissions()
+                        withAnimation(.spring(duration: 0.35)) { pendingMissionOffer = nil }
+                        showToast("Mission accepted: \(offer.title)")
+                    },
+                    onDismiss: {
+                        deniedMissionOffers.insert(offer.id)
+                        withAnimation(.spring(duration: 0.35)) { pendingMissionOffer = nil }
+                    }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .animation(.spring(duration: 0.4), value: pendingMissionOffer != nil)
+                .zIndex(8)
+            }
+
+            // Cinematic story intro — shown for new games while world builds in background
+            if isShowingIntro {
+                IntroStoryView(onBegin: onIntroFinished)
+                    .transition(.opacity)
+                    .zIndex(14)
             }
 
             // Dialogue panel
@@ -223,8 +268,8 @@ struct GameView: View {
                 .animation(.easeOut(duration: 0.5), value: toastMessage != nil)
             }
 
-            // HUD (hidden while chatting / loading / sleeping / paused / settings)
-            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused, !isShowingSettings {
+            // HUD (hidden while chatting / loading / sleeping / paused / settings / missions / intro)
+            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused, !isShowingSettings, !isShowingMissions, !isShowingIntro {
                 VStack(spacing: 0) {
                     topInfoBar
                         .padding(.horizontal, 12)
@@ -293,10 +338,13 @@ struct GameView: View {
             }
         }
         .onChange(of: dialogueManager.isVisible) { _, visible in
+            desertScene.isInputBlocked = visible
             if visible {
                 clearKeyboardMovement()
                 if isPaused { isPaused = false }
                 if isShowingSettings { isShowingSettings = false }
+            } else {
+                pendingMissionOffer = nil
             }
         }
         .onChange(of: isSleeping) { _, sleeping in
@@ -316,16 +364,59 @@ struct GameView: View {
             let home = slot.progress(forCampId: "home")
             oasisStage = OasisGrowthStage(rawValue: home.oasisStage) ?? .barren
             oasisProgress = home.oasisProgress
+
+            // Restore mission state from save, then patch any gaps for returning players.
+            missionManager.load(from: slot.missions)
+            missionManager.unlock("keeper_first_drop")
+            if slot.waterDeliveries > 0 {
+                missionManager.complete("keeper_first_drop")
+                missionManager.unlock("glimmer_in_dust")
+            }
+            if slot.oasisFound > 0 {
+                missionManager.complete("glimmer_in_dust")
+                missionManager.unlock("oasis_remembers")
+            }
+            if slot.campProgress.count > 1 {
+                missionManager.unlock("beyond_horizon")
+            }
+            if slot.campProgress.count > 2 {
+                missionManager.complete("beyond_horizon")
+            }
+            if oasisStage == .lush  { missionManager.complete("oasis_remembers") }
+            if oasisStage >= .pond  { missionManager.complete("ancient_trial") }
+            if slot.waterDeliveries >= 5 { missionManager.complete("merchants_route") }
+            saveMissions()
+
+            // Show cinematic intro for brand-new saves.
+            let isNewGame = slot.waterFound == 0 && slot.oasisFound == 0 && slot.waterDeliveries == 0
+            if isNewGame { isShowingIntro = true }
+
             desertScene.onBuildProgress = { progress in
                 loadProgress = progress
             }
             desertScene.onBuildComplete = {
-                withAnimation(.easeOut(duration: 0.45)) {
-                    isLoadingWorld = false
+                worldReady = true
+                if !isShowingIntro {
+                    withAnimation(.easeOut(duration: 0.45)) { isLoadingWorld = false }
+                    ensureCallbacksWired()
                 }
-                wireCallbacks()
-                PointerLockBridge.wantsLock = true
             }
+
+            // Wire the NPC mission-offer callback on DialogueManager.
+            dialogueManager.onConversationStarted = { npc in
+                guard let offerId = npc.personality.missionOffer,
+                      !missionManager.isUnlocked(offerId),
+                      !deniedMissionOffers.contains(offerId),
+                      let def = MissionManager.catalog.first(where: { $0.id == offerId })
+                else { return }
+                Task {
+                    try? await Task.sleep(for: .milliseconds(700))
+                    await MainActor.run {
+                        withAnimation(.spring(duration: 0.4)) { pendingMissionOffer = def }
+                    }
+                }
+            }
+
             desertScene.build(from: slot)
         }
     }
@@ -340,24 +431,63 @@ struct GameView: View {
         }
         if paused {
             clearKeyboardMovement()
+            desertScene.isInputBlocked = true
             PointerLockBridge.wantsLock = false
         } else {
+            desertScene.isInputBlocked = false
             PointerLockBridge.wantsLock = isPointerLockedGameplay
         }
     }
 
     private func setShowingSettings(_ showing: Bool) {
         guard isShowingSettings != showing else { return }
-        if showing { isPaused = false }
+        if showing { isPaused = false; isShowingMissions = false }
         withAnimation(.easeOut(duration: 0.2)) {
             isShowingSettings = showing
         }
         if showing {
             clearKeyboardMovement()
+            desertScene.isInputBlocked = true
             PointerLockBridge.wantsLock = false
         } else {
+            desertScene.isInputBlocked = false
             PointerLockBridge.wantsLock = isPointerLockedGameplay
         }
+    }
+
+    private func setShowingMissions(_ showing: Bool) {
+        guard isShowingMissions != showing else { return }
+        if showing { isPaused = false; isShowingSettings = false }
+        withAnimation(.easeOut(duration: 0.2)) {
+            isShowingMissions = showing
+        }
+        if showing {
+            clearKeyboardMovement()
+            desertScene.isInputBlocked = true
+            PointerLockBridge.wantsLock = false
+        } else {
+            desertScene.isInputBlocked = false
+            PointerLockBridge.wantsLock = isPointerLockedGameplay
+        }
+    }
+
+    private func ensureCallbacksWired() {
+        guard !callbacksWired else { return }
+        callbacksWired = true
+        wireCallbacks()
+    }
+
+    private func onIntroFinished() {
+        withAnimation(.easeOut(duration: 0.5)) { isShowingIntro = false }
+        ensureCallbacksWired()
+        if worldReady {
+            withAnimation(.easeOut(duration: 0.45).delay(0.2)) { isLoadingWorld = false }
+        }
+        // If world not ready, WorldLoadingOverlay appears and onBuildComplete handles it.
+    }
+
+    private func saveMissions() {
+        gameManager.updateProgress(slotIndex: slotIndex, missions: missionManager.exportedRecords)
     }
 
     private func clearKeyboardMovement() {
@@ -398,6 +528,8 @@ struct GameView: View {
             if isDown {
                 if isShowingSettings {
                     setShowingSettings(false)
+                } else if isShowingMissions {
+                    setShowingMissions(false)
                 } else {
                     setPaused(!isPaused)
                 }
@@ -453,6 +585,31 @@ struct GameView: View {
                     .frame(width: 40, height: 40)
                     .background(.black.opacity(0.4), in: Circle())
             }
+
+            Button {
+                missionManager.markAllSeen()
+                saveMissions()
+                setShowingMissions(true)
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "list.bullet.clipboard.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(.black.opacity(0.4), in: Circle())
+
+                    if missionManager.hasNewMissions {
+                        Image(systemName: "exclamationmark")
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(.black)
+                            .frame(width: 15, height: 15)
+                            .background(Color(red: 1.0, green: 0.85, blue: 0.15), in: Circle())
+                            .offset(x: 4, y: -4)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .animation(.spring(duration: 0.3), value: missionManager.hasNewMissions)
 
             dayNightBadge
 
@@ -531,6 +688,9 @@ struct GameView: View {
 
                 let found = slot.oasisFound + 1
                 gameManager.updateProgress(slotIndex: slotIndex, oasisFound: found)
+                missionManager.complete("glimmer_in_dust")
+                missionManager.unlock("oasis_remembers")
+                saveMissions()
                 showToast("Oasis found! (\(found))")
             }
         }
@@ -542,6 +702,8 @@ struct GameView: View {
                 waterFound: slot.waterFound + 1,
                 isCarryingWater: true
             )
+            missionManager.unlock("glimmer_in_dust")
+            saveMissions()
             showToast("Bucket filled — bring it to camp!")
         }
 
@@ -570,6 +732,11 @@ struct GameView: View {
                     oasisProgress: prog
                 )
             )
+
+            // Mission tracking for water delivery
+            missionManager.complete("keeper_first_drop")
+            if deliveries >= 5 { missionManager.complete("merchants_route") }
+            saveMissions()
 
             if unlockedCompass {
                 showToast("Water delivered! Compass unlocked.")
@@ -623,6 +790,9 @@ struct GameView: View {
                 if campId == "home" {
                     oasisStage = stage
                     oasisProgress = progress
+                    if stage >= .pond { missionManager.complete("ancient_trial") }
+                    if stage == .lush { missionManager.complete("oasis_remembers") }
+                    saveMissions()
                 }
                 persistCamp(campId)
                 if advanced {
@@ -637,6 +807,13 @@ struct GameView: View {
                 slotIndex: slotIndex,
                 campProgress: CampProgress(id: site.id)
             )
+            // First remote camp found → unlock the mission; second → complete it.
+            if missionManager.isActive("beyond_horizon") {
+                missionManager.complete("beyond_horizon")
+            } else {
+                missionManager.unlock("beyond_horizon")
+            }
+            saveMissions()
         }
 
         desertScene.onTimeOfDayChanged = { t in
@@ -654,6 +831,12 @@ struct GameView: View {
                 tasksCompleted: slot.tasksCompleted + 1,
                 isCarryingWater: false
             )
+            switch npc.personality {
+            case .wanderer: missionManager.complete("wanderers_plea")
+            case .lost:     missionManager.complete("lost_and_found")
+            default: break
+            }
+            saveMissions()
             let name = npc.personality == .wanderer ? "the wanderer" : "the lost traveller"
             showToast("You shared your water with \(name).")
         }
@@ -1017,6 +1200,8 @@ struct GameSceneView: UIViewRepresentable {
     let scene: DesertScene
     var acceptsKeyboard: Bool = true
     var pointerLookEnabled: Bool = true
+    /// When true the on-screen joystick is visible; camera drag is restricted to the right portion of screen.
+    var showsJoystick: Bool = false
     var onNPCTapped: ((NPCNode) -> Void)?
     var onAnimalTapped: ((AnimalNode) -> Void)?
     var onBedTapped: (() -> Void)?
@@ -1058,6 +1243,8 @@ struct GameSceneView: UIViewRepresentable {
         pan.maximumNumberOfTouches = 1
         pan.cancelsTouchesInView = false
         pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        pan.delegate = v
+        v.cameraPanRecognizer = pan
         v.addGestureRecognizer(pan)
         context.coordinator.cameraPanGesture = pan
 
@@ -1088,6 +1275,7 @@ struct GameSceneView: UIViewRepresentable {
             coordinator?.onCameraDrag?(yaw, pitch)
         }
         uiView.pointerLookEnabled = pointerLookEnabled
+        uiView.joystickVisible = showsJoystick
         uiView.setKeyboardCaptureEnabled(acceptsKeyboard)
     }
 
@@ -1156,7 +1344,7 @@ struct GameSceneView: UIViewRepresentable {
 }
 
 /// Captures hardware keyboard for Mac (Designed for iPad) and iPad keyboards.
-final class GameSCNView: SCNView {
+final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
     var onKeyDown: ((GameHardwareKey) -> Void)?
     var onKeyUp: ((GameHardwareKey) -> Void)?
     var onCameraDrag: ((Float, Float) -> Void)?
@@ -1165,6 +1353,7 @@ final class GameSCNView: SCNView {
         didSet {
             if !pointerLookEnabled {
                 lastHoverPoint = nil
+                cancelCameraInertia()
             }
             bindMouseLook()
             if pointerLookEnabled {
@@ -1172,6 +1361,11 @@ final class GameSCNView: SCNView {
             }
         }
     }
+    /// Set to true when the on-screen joystick is visible so camera orbit is
+    /// restricted to the right portion of the screen (avoiding joystick area).
+    var joystickVisible: Bool = false
+    /// Reference to the camera pan recognizer; set by the UIViewRepresentable wrapper.
+    var cameraPanRecognizer: UIPanGestureRecognizer?
 
     private var keyboardCaptureEnabled = true
     private var heldKeys: Set<GameHardwareKey> = []
@@ -1179,6 +1373,9 @@ final class GameSCNView: SCNView {
     private var lastPanPoint: CGPoint?
     private var lastHoverPoint: CGPoint?
     private var mouseObservers: [NSObjectProtocol] = []
+    // Inertia state for touch orbit
+    private var panVelocity: CGPoint = .zero
+    private var inertiaActive = false
 
     private let pointerLookSensitivity: Float = 0.0045
     private let mouseLookSensitivity: Float = 0.0028
@@ -1287,24 +1484,93 @@ final class GameSCNView: SCNView {
         super.pressesCancelled(presses, with: event)
     }
 
+    // MARK: - UIGestureRecognizerDelegate
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === cameraPanRecognizer, joystickVisible else { return true }
+        // When joystick is on-screen, only allow camera orbit from the right 55% of the view
+        // so the joystick area (bottom-left) doesn't trigger spurious camera movement.
+        return touch.location(in: self).x > bounds.width * 0.45
+    }
+
     @objc func handleCameraPan(_ gesture: UIPanGestureRecognizer) {
         guard pointerLookEnabled else {
             lastPanPoint = nil
+            cancelCameraInertia()
             return
         }
         switch gesture.state {
         case .began:
+            cancelCameraInertia()
             lastPanPoint = gesture.translation(in: self)
         case .changed:
             let point = gesture.translation(in: self)
             let last = lastPanPoint ?? point
-            let dx = Float(point.x - last.x) * 0.005
-            let dy = Float(point.y - last.y) * 0.004
+            let rawDx = point.x - last.x
+            let rawDy = point.y - last.y
             lastPanPoint = point
+            panVelocity = CGPoint(x: rawDx, y: rawDy)
+            let (dx, dy) = touchCameraDelta(dx: rawDx, dy: rawDy)
             onCameraDrag?(dx, -dy)
+        case .ended:
+            lastPanPoint = nil
+            let v = gesture.velocity(in: self)
+            panVelocity = v
+            beginCameraInertia()
         default:
             lastPanPoint = nil
+            cancelCameraInertia()
         }
+    }
+
+    /// Converts a raw touch delta (points) to camera yaw/pitch deltas (radians),
+    /// normalised to screen size so sensitivity is consistent on iPhone and iPad.
+    private func touchCameraDelta(dx: CGFloat, dy: CGFloat) -> (Float, Float) {
+        let w = max(320, bounds.width)
+        let h = max(320, bounds.height)
+        return (Float(dx / w) * .pi * 1.6, Float(dy / h) * .pi * 1.2)
+    }
+
+    private func beginCameraInertia() {
+        let threshold: CGFloat = 12
+        guard abs(panVelocity.x) > threshold || abs(panVelocity.y) > threshold else {
+            panVelocity = .zero
+            return
+        }
+        inertiaActive = true
+        scheduleInertiaStep()
+    }
+
+    private func cancelCameraInertia() {
+        inertiaActive = false
+        panVelocity = .zero
+    }
+
+    private func scheduleInertiaStep() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60.0) { [weak self] in
+            self?.inertiaStep()
+        }
+    }
+
+    private func inertiaStep() {
+        guard inertiaActive, pointerLookEnabled else {
+            cancelCameraInertia()
+            return
+        }
+        // Decay: velocity reaches ~5% after ≈1 second at 60fps
+        panVelocity.x *= 0.90
+        panVelocity.y *= 0.90
+
+        let threshold: CGFloat = 6
+        guard abs(panVelocity.x) > threshold || abs(panVelocity.y) > threshold else {
+            cancelCameraInertia()
+            return
+        }
+
+        // velocity is in pts/sec; divide by 60 for one frame's worth
+        let (dx, dy) = touchCameraDelta(dx: panVelocity.x / 60, dy: panVelocity.y / 60)
+        onCameraDrag?(dx, -dy)
+        scheduleInertiaStep()
     }
 
     @objc func handleCameraHover(_ gesture: UIHoverGestureRecognizer) {

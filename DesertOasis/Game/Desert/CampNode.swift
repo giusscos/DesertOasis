@@ -402,6 +402,7 @@ final class CampNode: SCNNode {
             let localY = max(0, worldH - position.y)
             tent.position = SCNVector3(wx, localY, wz)
             tent.eulerAngles.y = offset.2
+            VoxelPropBuilder.furnishNeighbourTent(tent, index: i)
             addChildNode(tent)
             tentNodes.append(tent)
             registerTentFootprint(localX: wx, localZ: wz, radius: footprintRadius)

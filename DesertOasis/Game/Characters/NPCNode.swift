@@ -286,6 +286,17 @@ enum NPCPersonality: CaseIterable {
         self == .wanderer || self == .lost
     }
 
+    /// Mission this NPC type will offer at the start of a conversation (nil if none).
+    var missionOffer: String? {
+        switch self {
+        case .wanderer: return "wanderers_plea"
+        case .merchant: return "merchants_route"
+        case .elder:    return "ancient_trial"
+        case .lost:     return "lost_and_found"
+        case .child:    return nil
+        }
+    }
+
     var task: NPCTask {
         switch self {
         case .wanderer: NPCTask(description: "Bring water to the wanderer")

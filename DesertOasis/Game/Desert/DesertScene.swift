@@ -892,6 +892,9 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     // MARK: - Player movement
 
     private var moveInput: SIMD2<Float> = .zero
+    var isInputBlocked: Bool = false {
+        didSet { if isInputBlocked { moveInput = .zero } }
+    }
     private var isRunning = false
     private var verticalVelocity: Float = 0
     private var isGrounded = true
@@ -907,7 +910,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private let heightEpsilon: Float = 0.12
 
     func setMoveInput(dx: Float, dy: Float) {
-        guard !isSleeping else {
+        guard !isSleeping, !isInputBlocked else {
             moveInput = .zero
             return
         }
@@ -1062,6 +1065,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             nextZ = resolved.y
         }
 
+        resolveEntityCollisions(x: &nextX, z: &nextZ)
+
         let yOff: Float = isInWater ? -0.08 : 0.01
         let groundAtNext = groundY(x: nextX, z: nextZ) + yOff
         let groundAtPrev = groundY(x: prevX, z: prevZ) + yOff
@@ -1119,6 +1124,31 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         }
 
         playerNode.position = SCNVector3(nextX, nextY, nextZ)
+    }
+
+    private func resolveEntityCollisions(x: inout Float, z: inout Float) {
+        for npc in npcs {
+            pushPlayer(x: &x, z: &z, awayFrom: npc.position, entityRadius: 0.30)
+        }
+        for animal in animals {
+            pushPlayer(x: &x, z: &z, awayFrom: animal.position, entityRadius: animal.kind.colliderRadius)
+        }
+    }
+
+    private func pushPlayer(x: inout Float, z: inout Float,
+                            awayFrom entityPos: SCNVector3,
+                            entityRadius: Float) {
+        let combined = playerCollisionRadius + entityRadius
+        let dx = x - entityPos.x
+        var dz = z - entityPos.z
+        let distSq = dx * dx + dz * dz
+        guard distSq < combined * combined else { return }
+        let dist = distSq > 1e-6 ? sqrt(distSq) : 0
+        if dist < 1e-4 { dz = 1 } // coincident — push along Z
+        let inv = 1 / max(dist, 1e-4)
+        let overlap = combined - dist
+        x += dx * inv * overlap
+        z += dz * inv * overlap
     }
 
     private func updateWater(deltaTime: Float) {

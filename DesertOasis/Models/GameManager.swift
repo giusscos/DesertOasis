@@ -81,7 +81,8 @@ final class GameManager {
         posX: Float? = nil,
         posZ: Float? = nil,
         timeOfDay: Float? = nil,
-        campProgress: CampProgress? = nil
+        campProgress: CampProgress? = nil,
+        missions: [MissionRecord]? = nil
     ) {
         if let w = waterFound       { saveSlots[slotIndex].waterFound       = w }
         if let o = oasisFound       { saveSlots[slotIndex].oasisFound       = o }
@@ -100,6 +101,7 @@ final class GameManager {
         if let z = posZ             { saveSlots[slotIndex].playerPositionZ  = z }
         if let tod = timeOfDay      { saveSlots[slotIndex].timeOfDay        = tod }
         if let cp = campProgress    { saveSlots[slotIndex].upsertCampProgress(cp) }
+        if let m = missions         { saveSlots[slotIndex].missions = m }
         saveSlots[slotIndex].lastUpdated = Date()
         persistSlots()
     }

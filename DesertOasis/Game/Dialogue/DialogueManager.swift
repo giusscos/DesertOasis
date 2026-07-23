@@ -12,6 +12,9 @@ final class DialogueManager {
     var isThinking: Bool = false
     var modelAvailable: Bool = false
 
+    /// Called when a conversation begins — used by GameView to trigger mission offers.
+    var onConversationStarted: ((NPCNode) -> Void)?
+
     private var session: LanguageModelSession?
     private let model = SystemLanguageModel.default
     private var situation = CampSituation(
@@ -44,6 +47,7 @@ final class DialogueManager {
         messages.append(greeting)
         npc.hideIndicator()
         npc.playTalkAnimation()
+        onConversationStarted?(npc)
     }
 
     func endConversation() {
