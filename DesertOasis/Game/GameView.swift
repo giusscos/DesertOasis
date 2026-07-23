@@ -228,18 +228,6 @@ struct GameView: View {
                     .background(.black.opacity(0.4), in: Circle())
             }
 
-            compactMeter(
-                title: "Water",
-                fill: campWaterLevel,
-                tint: Color(red: 0.25, green: 0.60, blue: 0.90)
-            )
-
-            compactMeter(
-                title: oasisStage.displayName,
-                fill: oasisOverall,
-                tint: Color(red: 0.28, green: 0.62, blue: 0.38)
-            )
-
             dayNightBadge
 
             if carryingWater {
@@ -271,32 +259,6 @@ struct GameView: View {
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 2)
-    }
-
-    private func compactMeter(title: String, fill: Float, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(1)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.black.opacity(0.35))
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max(4, geo.size.width * CGFloat(min(1, max(0, fill)))))
-                }
-            }
-            .frame(width: 72, height: 7)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var oasisOverall: Float {
-        let stages = Float(OasisGrowthStage.lush.rawValue)
-        return (Float(oasisStage.rawValue) + (oasisStage == .lush ? 1 : oasisProgress)) / (stages + 1)
     }
 
     private var dayNightBadge: some View {

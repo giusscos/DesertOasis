@@ -109,6 +109,7 @@ Export each as `.usdz`.
 | `prop_campfire.usdz` | Ring of stones + wood pile ≈ 1.2 m wide. Emissive orange coals (`embers` child). Optional 30-frame flicker on emissive intensity or flame planes. |
 | `prop_water_jug.usdz` | Ceramic / leather canteen ≈ 0.25 m; alternate carry visual when the player has a small amount of water (not a full bucket). |
 | `prop_trough.usdz` | Long wooden animal/people watering trough ≈ 1.8 m × 0.5 m; alternative or companion to the barrel for “shared camp water.” Include `water_surface` + `fill_point` like the barrel. |
+| `prop_camp_sign.usdz` | Weathered wood post + plank ≈ 0.9 m tall plaque. Camp stats (barrel %, oasis stage) are drawn in code on the face — leave a flat `sign_face` child (~0.7 × 0.45 m) facing +Z for SceneKit text / decals. Optional carved border only; no baked numbers. |
 
 Only generate these if the core barrel + three tools are already done.
 

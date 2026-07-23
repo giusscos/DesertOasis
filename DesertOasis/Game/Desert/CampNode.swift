@@ -35,12 +35,15 @@ final class CampNode: SCNNode {
     private(set) var settingsTableNode: SCNNode?
     private(set) var oasisGrowth: CampOasisGrowthNode!
     private(set) var playerTentNode: SCNNode?
+    private var statsSign: CampStatsSignNode!
 
     /// Collision cylinders (meters) matching VoxelPropBuilder footprints.
     private let barrelCollisionRadius: Float = 0.52
     private let barrelCollisionHeight: Float = 1.2
     private let campfireCollisionRadius: Float = 0.75
     private let campfireCollisionHeight: Float = 1.1
+    private let signCollisionRadius: Float = 0.55
+    private let signCollisionHeight: Float = 3.4
 
     let interactionRadius: Float = 3.5
     static let deliveryAmount: Float = 0.12
@@ -51,6 +54,10 @@ final class CampNode: SCNNode {
     private let minWaterToIrrigate: Float = 0.04
 
     var onIrrigated: ((Float, OasisGrowthStage, Float, Bool) -> Void)?
+
+    private var pendingNeighbourOffsets: [(Float, Float, Float)] = []
+    private var pendingUseLobbyShell = true
+    private weak var pendingWorld: VoxelWorld?
 
     init(site: CampSite, groundHeight: Float, world: VoxelWorld) {
         self.site = site
@@ -65,9 +72,27 @@ final class CampNode: SCNNode {
         buildBarrel()
         buildCampfire()
         buildOasisGrowth()
+        buildStatsSign()
     }
 
     required init?(coder: NSCoder) { nil }
+
+    /// Builds at most one pending neighbour tent. Returns true while more remain.
+    @discardableResult
+    func buildNextPendingNeighbour() -> Bool {
+        guard let world = pendingWorld, !pendingNeighbourOffsets.isEmpty else {
+            pendingWorld = nil
+            return false
+        }
+        let next = pendingNeighbourOffsets.removeFirst()
+        placeNeighbourTents(offsets: [next], world: world, useLobbyShell: pendingUseLobbyShell)
+        if pendingNeighbourOffsets.isEmpty {
+            pendingWorld = nil
+        }
+        return !pendingNeighbourOffsets.isEmpty
+    }
+
+    var hasPendingNeighbours: Bool { !pendingNeighbourOffsets.isEmpty }
 
     // MARK: - Water
 
@@ -77,6 +102,7 @@ final class CampNode: SCNNode {
         waterSurface.scale.y = max(0.02, fillLevel)
         waterSurface.position.y = 0.12
         waterSurface.isHidden = fillLevel < 0.01
+        refreshStatsSign()
     }
 
     func canDeliver(at worldPosition: SCNVector3) -> Bool {
@@ -100,6 +126,7 @@ final class CampNode: SCNNode {
 
     func restoreOasis(stage: OasisGrowthStage, progress: Float) {
         oasisGrowth.restore(stage: stage, progress: progress)
+        refreshStatsSign()
     }
 
     var oasisStage: OasisGrowthStage { oasisGrowth.stage }
@@ -117,6 +144,7 @@ final class CampNode: SCNNode {
         let spent = min(CampOasisGrowthNode.waterPerTick, fillLevel)
         setFillLevel(fillLevel - spent)
         let advanced = oasisGrowth.addProgress(CampOasisGrowthNode.progressPerTick)
+        refreshStatsSign()
         onIrrigated?(fillLevel, oasisGrowth.stage, oasisGrowth.progress, advanced)
     }
 
@@ -135,6 +163,7 @@ final class CampNode: SCNNode {
                 oasisGrowth.addProgress(CampOasisGrowthNode.progressPerTick)
             }
         }
+        refreshStatsSign()
     }
 
     // MARK: - Collision / footprints
@@ -194,6 +223,11 @@ final class CampNode: SCNNode {
         }
         if let fire = campfireNode,
            collidesCylinder(node: fire, cylRadius: campfireCollisionRadius, height: campfireCollisionHeight,
+                            x: x, y: y, z: z, playerRadius: radius) {
+            return true
+        }
+        if let sign = statsSign,
+           collidesCylinder(node: sign, cylRadius: signCollisionRadius, height: signCollisionHeight,
                             x: x, y: y, z: z, playerRadius: radius) {
             return true
         }
@@ -341,7 +375,9 @@ final class CampNode: SCNNode {
             (-15.0, -4.0, 0.5),
             ( 15.0, -3.5, -0.7),
         ]
-        placeNeighbourTents(offsets: neighbourOffsets, world: world, useLobbyShell: true)
+        pendingUseLobbyShell = true
+        pendingWorld = world
+        pendingNeighbourOffsets = neighbourOffsets
     }
 
     private func placeNeighbourTents(offsets: [(Float, Float, Float)],
@@ -390,5 +426,19 @@ final class CampNode: SCNNode {
         // Grow the oasis on the open side of camp, opposite the main tent.
         oasisGrowth.position = SCNVector3(0.5, 0, -5.5)
         addChildNode(oasisGrowth)
+    }
+
+    private func buildStatsSign() {
+        statsSign = CampStatsSignNode(title: site.displayName)
+        // South-east of the plaza by the barrel, face south so third-person
+        // cameras looking into camp read the board head-on.
+        statsSign.position = SCNVector3(4.6, 0, -3.8)
+        statsSign.eulerAngles.y = .pi
+        addChildNode(statsSign)
+        refreshStatsSign()
+    }
+
+    private func refreshStatsSign() {
+        statsSign?.refresh(water: fillLevel, stage: oasisStage, progress: oasisProgress)
     }
 }

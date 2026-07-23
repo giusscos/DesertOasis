@@ -16,6 +16,15 @@ struct CampSite: Identifiable {
     let padRadius: Float
 
     var worldPosition: SIMD2<Float> { SIMD2(worldX, worldZ) }
+
+    var displayName: String {
+        if isHome { return "Home Camp" }
+        // camp_r3_1 → "Way Camp 2"
+        if let n = id.split(separator: "_").last, let idx = Int(n) {
+            return "Way Camp \(idx + 1)"
+        }
+        return "Way Camp"
+    }
 }
 
 /// Persisted per-camp water + oasis growth.
@@ -62,32 +71,34 @@ struct SeededRandom {
 }
 
 enum CampSiteGenerator {
-    /// Home + rings of remote camps. Rings extend far so the desert feels endless.
-    static func sites(seed: UInt64, rings: Int = 6) -> [CampSite] {
+    /// Home + sparse remote camps. Finding another camp should feel rare.
+    static func sites(seed: UInt64, rings: Int = 8) -> [CampSite] {
         var result: [CampSite] = [
             CampSite(id: "home", worldX: 0, worldZ: 0, isHome: true, padRadius: 22)
         ]
         var rng = SeededRandom(seed: seed &+ 9_001)
+        var campIndex = 0
         for ring in 1...rings {
-            let count = ring == 1 ? 4 : (ring <= 3 ? 5 : 6)
-            let baseDist = Float(ring) * 92
-            let angleOffset = rng.nextFloat() * Float.pi * 2
-            for i in 0..<count {
-                let jitter = (rng.nextFloat() - 0.5) * 18
-                let dist = baseDist + jitter
-                let angle = angleOffset + Float(i) / Float(count) * Float.pi * 2
-                    + (rng.nextFloat() - 0.5) * 0.25
-                let x = cos(angle) * dist
-                let z = sin(angle) * dist
-                let id = String(format: "camp_r%d_%d", ring, i)
-                result.append(CampSite(
-                    id: id,
-                    worldX: x,
-                    worldZ: z,
-                    isHome: false,
-                    padRadius: 18
-                ))
-            }
+            // ~1 in 2 rings place a camp; outer rings a bit likelier so the far desert isn't empty.
+            let placeChance: Float = ring <= 2 ? 0.35 : 0.55
+            guard rng.nextFloat() < placeChance else { continue }
+
+            // Wide spacing: first possible camp ~210 m out, then ~190 m per ring.
+            let baseDist = 210 + Float(ring - 1) * 190
+            let jitter = (rng.nextFloat() - 0.5) * 40
+            let dist = baseDist + jitter
+            let angle = rng.nextFloat() * Float.pi * 2
+            let x = cos(angle) * dist
+            let z = sin(angle) * dist
+            let id = String(format: "camp_r%d_%d", ring, campIndex)
+            campIndex += 1
+            result.append(CampSite(
+                id: id,
+                worldX: x,
+                worldZ: z,
+                isHome: false,
+                padRadius: 18
+            ))
         }
         return result
     }

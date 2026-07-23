@@ -82,6 +82,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var streamPending: [(cx: Int, cz: Int)] = []
     private let streamChunksPerFrame = 2
 
+    /// Remote camps are heavy (lobby tents + remesh). Spawn across frames to avoid hitch/jetsam.
+    private enum CampSpawnPhase {
+        case prepareChunks(site: CampSite, coords: [(cx: Int, cz: Int)], index: Int)
+        case buildShell(site: CampSite)
+        case buildNeighbours(site: CampSite, node: CampNode)
+        case finish(site: CampSite, node: CampNode)
+    }
+    private var campSpawnPhase: CampSpawnPhase?
+    private var queuedCampSites: [CampSite] = []
+    private let campPrepChunksPerFrame = 3
+    private let campDiscoverRadius: Float = 52
+
     // Progressive world build
     private(set) var isBuildingWorld = false
     private var buildSlot: SaveSlot?
@@ -103,7 +115,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         worldSeed = slot.desertSeed
         deliveryCount = slot.waterDeliveries
         campSites = CampSiteGenerator.sites(seed: slot.desertSeed)
-        slotCampProgress = Dictionary(uniqueKeysWithValues: slot.campProgress.map { ($0.id, $0) })
+        slotCampProgress = Dictionary(slot.campProgress.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         dayNight.setTimeOfDay(slot.timeOfDay)
 
         setupLighting()
@@ -1252,29 +1264,76 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     }
 
     private func discoverNearbyCamps() {
-        guard let playerNode, let generator = buildGenerator else { return }
+        guard let playerNode, buildGenerator != nil, voxelWorld != nil else { return }
         let px = playerNode.position.x
         let pz = playerNode.position.z
+
+        // Queue newly visible camps (do not spawn them in the same breath).
         for site in campSites where !spawnedCampIDs.contains(site.id) {
+            if queuedCampSites.contains(where: { $0.id == site.id }) { continue }
+            if case .prepareChunks(let s, _, _)? = campSpawnPhase, s.id == site.id { continue }
+            if case .buildShell(let s)? = campSpawnPhase, s.id == site.id { continue }
+            if case .buildNeighbours(let s, _)? = campSpawnPhase, s.id == site.id { continue }
+            if case .finish(let s, _)? = campSpawnPhase, s.id == site.id { continue }
             let dx = site.worldX - px
             let dz = site.worldZ - pz
-            let dist = sqrt(dx * dx + dz * dz)
-            guard dist < 48 else { continue }
+            guard sqrt(dx * dx + dz * dz) < campDiscoverRadius else { continue }
+            queuedCampSites.append(site)
+        }
 
-            // Ensure pad chunks exist before placing props.
+        advanceCampSpawn()
+    }
+
+    private func advanceCampSpawn() {
+        guard let generator = buildGenerator, voxelWorld != nil else { return }
+
+        if campSpawnPhase == nil, let next = queuedCampSites.first {
+            queuedCampSites.removeFirst()
+            // Reserve the id immediately so we never double-queue on hitch frames.
+            spawnedCampIDs.insert(next.id)
             let coords = voxelWorld.chunkCoordinatesAround(
-                worldX: site.worldX, worldZ: site.worldZ, radiusChunks: 3
+                worldX: next.worldX, worldZ: next.worldZ, radiusChunks: 3
             )
-            for c in coords where !voxelWorld.hasChunk(cx: c.cx, cz: c.cz) {
+            campSpawnPhase = .prepareChunks(site: next, coords: coords, index: 0)
+        }
+
+        switch campSpawnPhase {
+        case .prepareChunks(let site, let coords, var index):
+            var generated = 0
+            while index < coords.count, generated < campPrepChunksPerFrame {
+                let c = coords[index]
+                index += 1
+                if voxelWorld.hasChunk(cx: c.cx, cz: c.cz) { continue }
                 generator.generateChunk(into: voxelWorld, cx: c.cx, cz: c.cz)
                 voxelWorld.remeshChunk(cx: c.cx, cz: c.cz, animated: false)
+                generated += 1
+            }
+            if index >= coords.count {
+                campSpawnPhase = .buildShell(site: site)
+            } else {
+                campSpawnPhase = .prepareChunks(site: site, coords: coords, index: index)
             }
 
+        case .buildShell(let site):
             let progress = slotCampProgress[site.id] ?? CampProgress(id: site.id)
+            // spawnCamp inserts the id again — already reserved above.
             let node = spawnCamp(site: site, progress: progress)
+            if node.hasPendingNeighbours {
+                campSpawnPhase = .buildNeighbours(site: site, node: node)
+            } else {
+                campSpawnPhase = .finish(site: site, node: node)
+            }
+
+        case .buildNeighbours(let site, let node):
+            // One lobby tent per frame — these meshes are huge.
+            let more = node.buildNextPendingNeighbour()
+            if !more {
+                campSpawnPhase = .finish(site: site, node: node)
+            }
+
+        case .finish(let site, let node):
             spawnNPCs(for: node)
 
-            // Local oasis for the new camp if missing.
             let newOases = generator.placeAndCarveOases(
                 into: voxelWorld, nearSites: [site], oasisCount: 1
             )
@@ -1284,10 +1343,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
                 placedOasisKeys.insert(key)
                 oases.append(oasis)
                 addWaterBody(for: oasis)
-                voxelWorld.remeshDirtyChunks()
+            }
+            voxelWorld.remeshDirtyChunks()
+
+            campSpawnPhase = nil
+            slotCampProgress[site.id] = slotCampProgress[site.id] ?? CampProgress(id: site.id)
+            let discovered = site
+            DispatchQueue.main.async { [weak self] in
+                self?.onCampDiscovered?(discovered)
             }
 
-            onCampDiscovered?(site)
+        case nil:
+            break
         }
     }
 
