@@ -95,12 +95,15 @@ enum VoxelCharacterBuilder {
         ]
 
         // --- Legs (pivot at hip) ---
+        // Pants run all the way to the hip so they meet the waist; a short top flare
+        // closes the crotch gap under the torso.
         let legL = SCNNode()
         legL.name = "leg_L"
         legL.position = SCNVector3(-2.2 * u, 12 * u, 0)
         let legLS = VoxelSculpture(sizeX: 5, sizeY: 13, sizeZ: 5,
                                    origin: SIMD3<Float>(-2.5, -12, -2.5) * u)
-        legLS.fillCylinder(c0: 2.5, c1: 2.5, a0: 2, a1: 11, radius: 1.8, type: .canvas)
+        legLS.fillCylinder(c0: 2.5, c1: 2.5, a0: 2, a1: 12, radius: 1.8, type: .canvas)
+        legLS.fillCylinder(c0: 2.5, c1: 2.5, a0: 10, a1: 12, radius: 2.2, type: .canvas)
         legLS.fillEllipsoid(cx: 2.5, cy: 1.2, cz: 2.5, rx: 2.1, ry: 1.2, rz: 2.2, type: .darkWood)
         legL.addChildNode(sculptNode(legLS, name: "leg_L_mesh", colors: colors))
         root.addChildNode(legL)
@@ -110,17 +113,24 @@ enum VoxelCharacterBuilder {
         legR.position = SCNVector3(2.2 * u, 12 * u, 0)
         let legRS = VoxelSculpture(sizeX: 5, sizeY: 13, sizeZ: 5,
                                    origin: SIMD3<Float>(-2.5, -12, -2.5) * u)
-        legRS.fillCylinder(c0: 2.5, c1: 2.5, a0: 2, a1: 11, radius: 1.8, type: .canvas)
+        legRS.fillCylinder(c0: 2.5, c1: 2.5, a0: 2, a1: 12, radius: 1.8, type: .canvas)
+        legRS.fillCylinder(c0: 2.5, c1: 2.5, a0: 10, a1: 12, radius: 2.2, type: .canvas)
         legRS.fillEllipsoid(cx: 2.5, cy: 1.2, cz: 2.5, rx: 2.1, ry: 1.2, rz: 2.2, type: .darkWood)
         legR.addChildNode(sculptNode(legRS, name: "leg_R_mesh", colors: colors))
         root.addChildNode(legR)
 
         // --- Torso ---
-        let torsoS = VoxelSculpture(sizeX: 11, sizeY: 12, sizeZ: 7,
-                                    origin: SIMD3<Float>(-5.5, 0, -3.5) * u)
-        torsoS.fillEllipsoid(cx: 5.5, cy: 6, cz: 3.5, rx: 4.8, ry: 5.5, rz: 2.8, type: .cloth)
+        // Origin starts 2 units below the hip so hips/waist overlap pant tops
+        // (the old ellipsoid tapered away and left a visible midsection hole).
+        let torsoS = VoxelSculpture(sizeX: 11, sizeY: 14, sizeZ: 7,
+                                    origin: SIMD3<Float>(-5.5, -2, -3.5) * u)
+        // Hips / pelvis bridge (pants) + tucked shirt over them
+        torsoS.fillEllipsoid(cx: 5.5, cy: 1.8, cz: 3.5, rx: 5.0, ry: 2.2, rz: 2.7, type: .canvas)
+        torsoS.fillCylinder(c0: 5.5, c1: 3.5, a0: 2, a1: 5, radius: 4.5, type: .cloth)
         // Belt
-        torsoS.fillCylinder(c0: 5.5, c1: 3.5, a0: 1, a1: 2.5, radius: 4.6, type: .darkWood)
+        torsoS.fillCylinder(c0: 5.5, c1: 3.5, a0: 3, a1: 4.5, radius: 4.8, type: .darkWood)
+        // Chest / upper shirt
+        torsoS.fillEllipsoid(cx: 5.5, cy: 8.5, cz: 3.5, rx: 4.8, ry: 5.2, rz: 2.8, type: .cloth)
         let torso = sculptNode(torsoS, name: "torso", colors: colors)
         torso.position.y = 12 * u
         root.addChildNode(torso)
