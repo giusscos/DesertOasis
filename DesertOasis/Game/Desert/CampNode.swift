@@ -13,42 +13,69 @@ struct TentFootprint {
         return dx * dx + dz * dz < radius * radius
     }
 
-    /// Approximate clear radius from prop footprint × scale (+ margin).
     static func radius(forScale scale: Float) -> Float {
-        // Base tent ~2.25 × 3.1 m; use half-diagonal + padding.
         1.6 * scale + 0.6
     }
+
+    /// Lobby shell footprint (~8.75 × 13.75 m).
+    static func lobbyTentRadius() -> Float { 8.5 }
 }
 
-/// Home camp: voxel tents, neighbour tents, and the shared water barrel.
+/// Camp: tents, barrel, fire, and a growing oasis irrigated from the barrel.
 final class CampNode: SCNNode {
 
+    let site: CampSite
     private(set) var barrelNode: SCNNode!
+    private var campfireNode: SCNNode!
     private var waterSurface: SCNNode!
     private(set) var fillLevel: Float = 0
-    /// World-space tent keep-outs (filled after tents are placed).
     private(set) var tentFootprints: [TentFootprint] = []
-    /// Tent roots used for solid wall collision (open front).
     private var tentNodes: [SCNNode] = []
+    private(set) var bedNode: SCNNode?
+    private(set) var settingsTableNode: SCNNode?
+    private(set) var oasisGrowth: CampOasisGrowthNode!
+    private(set) var playerTentNode: SCNNode?
+
+    /// Collision cylinders (meters) matching VoxelPropBuilder footprints.
+    private let barrelCollisionRadius: Float = 0.52
+    private let barrelCollisionHeight: Float = 1.2
+    private let campfireCollisionRadius: Float = 0.75
+    private let campfireCollisionHeight: Float = 1.1
 
     let interactionRadius: Float = 3.5
     static let deliveryAmount: Float = 0.12
 
-    init(groundHeight: Float, world: VoxelWorld) {
+    /// NPCs irrigate on this interval when there is water in the barrel.
+    private var irrigateAccumulator: Float = 0
+    private let irrigateInterval: Float = 7.5
+    private let minWaterToIrrigate: Float = 0.04
+
+    var onIrrigated: ((Float, OasisGrowthStage, Float, Bool) -> Void)?
+
+    init(site: CampSite, groundHeight: Float, world: VoxelWorld) {
+        self.site = site
         super.init()
-        name = "camp"
-        position = SCNVector3(0, groundHeight, 0)
-        buildTents(world: world)
+        name = "camp_\(site.id)"
+        position = SCNVector3(site.worldX, groundHeight, site.worldZ)
+        if site.isHome {
+            buildHomeCamp(world: world)
+        } else {
+            buildRemoteCamp(world: world)
+        }
         buildBarrel()
         buildCampfire()
+        buildOasisGrowth()
     }
 
     required init?(coder: NSCoder) { nil }
 
+    // MARK: - Water
+
     func setFillLevel(_ level: Float) {
         fillLevel = max(0, min(1, level))
+        // Solid water column grows upward from the barrel floor.
         waterSurface.scale.y = max(0.02, fillLevel)
-        waterSurface.position.y = 0.08 + fillLevel * 0.95
+        waterSurface.position.y = 0.12
         waterSurface.isHidden = fillLevel < 0.01
     }
 
@@ -71,46 +98,154 @@ final class CampNode: SCNNode {
         return fillLevel
     }
 
+    func restoreOasis(stage: OasisGrowthStage, progress: Float) {
+        oasisGrowth.restore(stage: stage, progress: progress)
+    }
+
+    var oasisStage: OasisGrowthStage { oasisGrowth.stage }
+    var oasisProgress: Float { oasisGrowth.progress }
+
+    // MARK: - Irrigation (NPCs spend barrel water to grow the oasis)
+
+    /// Call each frame. When the barrel has water, NPCs slowly convert it into oasis growth.
+    func updateIrrigation(deltaTime: Float, hasCampNPCs: Bool) {
+        guard hasCampNPCs, fillLevel >= minWaterToIrrigate, oasisGrowth.stage != .lush else { return }
+        irrigateAccumulator += deltaTime
+        guard irrigateAccumulator >= irrigateInterval else { return }
+        irrigateAccumulator = 0
+
+        let spent = min(CampOasisGrowthNode.waterPerTick, fillLevel)
+        setFillLevel(fillLevel - spent)
+        let advanced = oasisGrowth.addProgress(CampOasisGrowthNode.progressPerTick)
+        onIrrigated?(fillLevel, oasisGrowth.stage, oasisGrowth.progress, advanced)
+    }
+
+    /// Fast-forward irrigation during sleep (amount ≈ seconds of work).
+    func simulateIrrigation(seconds: Float, hasCampNPCs: Bool) {
+        guard hasCampNPCs else { return }
+        var remaining = seconds
+        while remaining > 0, fillLevel >= minWaterToIrrigate, oasisGrowth.stage != .lush {
+            let step = min(irrigateInterval, remaining)
+            remaining -= step
+            irrigateAccumulator += step
+            if irrigateAccumulator >= irrigateInterval {
+                irrigateAccumulator = 0
+                let spent = min(CampOasisGrowthNode.waterPerTick, fillLevel)
+                setFillLevel(fillLevel - spent)
+                oasisGrowth.addProgress(CampOasisGrowthNode.progressPerTick)
+            }
+        }
+    }
+
+    // MARK: - Collision / footprints
+
     func isInsideTent(worldX: Float, worldZ: Float) -> Bool {
         tentFootprints.contains { $0.contains(x: worldX, z: worldZ) }
     }
 
-    /// Slide / block horizontal motion against tent canvas walls. Front doorway stays open.
+    func isNearBed(worldPosition: SCNVector3, radius: Float = 2.2) -> Bool {
+        guard let bed = bedNode else { return false }
+        let bedWorld = bed.convertPosition(SCNVector3Zero, to: nil)
+        let dx = worldPosition.x - bedWorld.x
+        let dz = worldPosition.z - bedWorld.z
+        return dx * dx + dz * dz < radius * radius
+    }
+
+    func isNearSettingsTable(worldPosition: SCNVector3, radius: Float = 2.0) -> Bool {
+        guard let table = settingsTableNode else { return false }
+        let tw = table.convertPosition(SCNVector3Zero, to: nil)
+        let dx = worldPosition.x - tw.x
+        let dz = worldPosition.z - tw.z
+        return dx * dx + dz * dz < radius * radius
+    }
+
     func resolvePlayerXZ(from prev: SIMD2<Float>,
                          to next: SIMD2<Float>,
                          worldY: Float,
                          radius: Float) -> SIMD2<Float> {
-        if !collidesTentWalls(x: next.x, y: worldY, z: next.y, radius: radius) {
+        if !collidesSolid(x: next.x, y: worldY, z: next.y, radius: radius) {
             return next
         }
         let slideX = SIMD2<Float>(next.x, prev.y)
-        if !collidesTentWalls(x: slideX.x, y: worldY, z: slideX.y, radius: radius) {
+        if !collidesSolid(x: slideX.x, y: worldY, z: slideX.y, radius: radius) {
             return slideX
         }
         let slideZ = SIMD2<Float>(prev.x, next.y)
-        if !collidesTentWalls(x: slideZ.x, y: worldY, z: slideZ.y, radius: radius) {
+        if !collidesSolid(x: slideZ.x, y: worldY, z: slideZ.y, radius: radius) {
             return slideZ
         }
         return prev
+    }
+
+    func collidesSolid(x: Float, y: Float, z: Float, radius: Float) -> Bool {
+        collidesTentWalls(x: x, y: y, z: z, radius: radius)
+            || collidesProps(x: x, y: y, z: z, radius: radius)
     }
 
     func collidesTentWalls(x: Float, y: Float, z: Float, radius: Float) -> Bool {
         tentNodes.contains { tentWallHit(tent: $0, world: SCNVector3(x, y, z), radius: radius) }
     }
 
+    private func collidesProps(x: Float, y: Float, z: Float, radius: Float) -> Bool {
+        if let barrel = barrelNode,
+           collidesCylinder(node: barrel, cylRadius: barrelCollisionRadius, height: barrelCollisionHeight,
+                            x: x, y: y, z: z, playerRadius: radius) {
+            return true
+        }
+        if let fire = campfireNode,
+           collidesCylinder(node: fire, cylRadius: campfireCollisionRadius, height: campfireCollisionHeight,
+                            x: x, y: y, z: z, playerRadius: radius) {
+            return true
+        }
+        return false
+    }
+
+    private func collidesCylinder(node: SCNNode,
+                                  cylRadius: Float,
+                                  height: Float,
+                                  x: Float, y: Float, z: Float,
+                                  playerRadius: Float) -> Bool {
+        let center = node.convertPosition(SCNVector3Zero, to: nil)
+        if y < center.y - 0.05 || y > center.y + height + playerRadius {
+            return false
+        }
+        let dx = x - center.x
+        let dz = z - center.z
+        let r = cylRadius + playerRadius
+        return dx * dx + dz * dz < r * r
+    }
+
     private func tentWallHit(tent: SCNNode, world: SCNVector3, radius: Float) -> Bool {
         let local = tent.convertPosition(world, from: nil)
-        let uf = VoxelMetrics.unit
-        // Match VoxelPropBuilder.tent sculpture extents (local space before root scale).
-        let halfW = 16 * uf
-        let halfD = 25 * uf
-        let wallT = 3.2 * uf
-        let maxY = 24 * uf
-        let doorHalf = 7.5 * uf
+        let isLobby = tent.name == "lobby_tent" || tent.name?.hasPrefix("lobby_tent") == true
 
-        let scale = max(tent.scale.x, 0.001)
+        let halfW: Float
+        let halfD: Float
+        let wallT: Float
+        let maxY: Float
+        let doorHalf: Float
+        let scale: Float
+
+        if isLobby {
+            // Matches VoxelPropBuilder.lobbyTentShell (lu = unit * 2.5).
+            let lu = VoxelMetrics.unit * 2.5
+            halfW = 24 * lu
+            halfD = 42 * lu
+            wallT = 3.5 * lu
+            maxY = 40 * lu
+            doorHalf = 10 * lu
+            scale = 1
+        } else {
+            let uf = VoxelMetrics.unit
+            halfW = 16 * uf
+            halfD = 25 * uf
+            wallT = 3.2 * uf
+            maxY = 38 * uf
+            doorHalf = 7.5 * uf
+            scale = max(tent.scale.x, 0.001)
+        }
+
         let r = radius / scale
-
         if local.y < -0.05 || local.y > maxY + r { return false }
 
         let lx = local.x
@@ -121,7 +256,6 @@ final class CampNode: SCNNode {
             && lz <= halfD + r
         guard inOuter else { return false }
 
-        // Open front (+Z): allow walking in/out through the doorway.
         if lz > halfD - wallT * 2 - r && abs(lx) < doorHalf {
             return false
         }
@@ -132,61 +266,129 @@ final class CampNode: SCNNode {
             && lz > innerBack + r
             && lz < halfD + r
         if inInterior { return false }
-
-        // Overlaps the canvas shell (side walls, back wall, or corners).
         return true
     }
 
-    private func registerTentFootprint(localX: Float, localZ: Float, scale: Float) {
+    private func registerTentFootprint(localX: Float, localZ: Float, radius: Float) {
         tentFootprints.append(TentFootprint(
             x: position.x + localX,
             z: position.z + localZ,
-            radius: TentFootprint.radius(forScale: scale)
+            radius: radius
         ))
     }
 
-    private func buildTents(world: VoxelWorld) {
-        let playerScale: Float = 1.45
-        let playerTent = VoxelPropBuilder.tent(scale: playerScale)
-        playerTent.position = SCNVector3(0, 0, 3.2)
-        playerTent.eulerAngles.y = Float.pi
-        addChildNode(playerTent)
-        tentNodes.append(playerTent)
-        registerTentFootprint(localX: 0, localZ: 3.2, scale: playerScale)
+    // MARK: - Build
 
-        // Keep neighbour tents well inside the flat camp pad (~12 m radius).
+    private func buildHomeCamp(world: VoxelWorld) {
+        // Same shell as the title screen lobby tent.
+        let tent = VoxelPropBuilder.lobbyTentShell()
+        // Entrance faces camp center (−Z after yaw π). Sit slightly north of the fire ring.
+        tent.position = SCNVector3(0, 0, 5.5)
+        tent.eulerAngles.y = Float.pi
+        addChildNode(tent)
+        tentNodes.append(tent)
+        playerTentNode = tent
+        registerTentFootprint(localX: 0, localZ: 5.5, radius: TentFootprint.lobbyTentRadius())
+
+        // Bed + settings table — same props/placements as the lobby, in tent-local space.
+        let bed = VoxelPropBuilder.lobbyBed()
+        bed.name = "sleep_bed"
+        bed.position = SCNVector3(2.45, 0, 5.5 + 0.7)
+        bed.eulerAngles.y = Float.pi
+        for i in 0..<3 {
+            bed.childNode(withName: "diary_\(i)", recursively: true)?.isHidden = true
+        }
+        addChildNode(bed)
+        bedNode = bed
+
+        let table = VoxelPropBuilder.lobbyTable()
+        table.name = "camp_settings_table"
+        table.position = SCNVector3(-2.2, 0, 5.5 + 1.0)
+        table.eulerAngles.y = Float.pi / 2
+        addChildNode(table)
+        settingsTableNode = table
+
+        // Neighbours use the same large tent shell, spaced for the bigger footprint.
         let neighbourOffsets: [(Float, Float, Float)] = [
-            (-6.5, -3.5, 0.6),
-            ( 6.8, -2.8, -0.9),
-            (-3.5, -7.0, 2.2),
+            (-16.0, -5.0, 0.55),
+            ( 16.0, -4.5, -0.75),
+            (-6.0, -16.5, 2.1),
         ]
-        let neighbourScale: Float = 1.15
-        for (i, offset) in neighbourOffsets.enumerated() {
-            let tent = VoxelPropBuilder.tent(scale: neighbourScale)
+        placeNeighbourTents(offsets: neighbourOffsets, world: world, useLobbyShell: true)
+    }
+
+    private func buildRemoteCamp(world: VoxelWorld) {
+        let tent = VoxelPropBuilder.lobbyTentShell(includeSign: false)
+        tent.position = SCNVector3(0, 0, 5.0)
+        tent.eulerAngles.y = Float.pi
+        tent.name = "lobby_tent_remote"
+        addChildNode(tent)
+        tentNodes.append(tent)
+        playerTentNode = tent
+        registerTentFootprint(localX: 0, localZ: 5.0, radius: TentFootprint.lobbyTentRadius())
+
+        let bed = VoxelPropBuilder.lobbyBed()
+        bed.name = "sleep_bed"
+        bed.position = SCNVector3(2.45, 0, 5.0 + 0.7)
+        bed.eulerAngles.y = Float.pi
+        for i in 0..<3 {
+            bed.childNode(withName: "diary_\(i)", recursively: true)?.isHidden = true
+        }
+        addChildNode(bed)
+        bedNode = bed
+
+        let neighbourOffsets: [(Float, Float, Float)] = [
+            (-15.0, -4.0, 0.5),
+            ( 15.0, -3.5, -0.7),
+        ]
+        placeNeighbourTents(offsets: neighbourOffsets, world: world, useLobbyShell: true)
+    }
+
+    private func placeNeighbourTents(offsets: [(Float, Float, Float)],
+                                     world: VoxelWorld,
+                                     useLobbyShell: Bool) {
+        for (i, offset) in offsets.enumerated() {
+            let tent: SCNNode
+            let footprintRadius: Float
+            if useLobbyShell {
+                tent = VoxelPropBuilder.lobbyTentShell(includeSign: false)
+                tent.name = "lobby_tent_neighbour_\(i)"
+                footprintRadius = TentFootprint.lobbyTentRadius()
+            } else {
+                let scale: Float = 1.15
+                tent = VoxelPropBuilder.tent(scale: scale)
+                tent.name = "neighbour_tent_\(i)"
+                footprintRadius = TentFootprint.radius(forScale: scale)
+            }
             let wx = offset.0
             let wz = offset.1
-            // Sit on camp floor (pad is flat); avoid sampling cliff edges.
-            let worldH = world.surfaceY(atWorldX: wx, worldZ: wz)
+            let worldH = world.surfaceY(atWorldX: position.x + wx, worldZ: position.z + wz)
             let localY = max(0, worldH - position.y)
             tent.position = SCNVector3(wx, localY, wz)
             tent.eulerAngles.y = offset.2
-            tent.name = "neighbour_tent_\(i)"
             addChildNode(tent)
             tentNodes.append(tent)
-            registerTentFootprint(localX: wx, localZ: wz, scale: neighbourScale)
+            registerTentFootprint(localX: wx, localZ: wz, radius: footprintRadius)
         }
     }
 
     private func buildBarrel() {
         barrelNode = VoxelPropBuilder.waterBarrel()
-        barrelNode.position = SCNVector3(3.2, 0, -1.5)
+        barrelNode.position = SCNVector3(3.6, 0, -2.2)
         waterSurface = barrelNode.childNode(withName: "water_surface", recursively: true)!
         addChildNode(barrelNode)
     }
 
     private func buildCampfire() {
-        let fire = VoxelPropBuilder.campfire()
-        fire.position = SCNVector3(-1.5, 0, -2.0)
-        addChildNode(fire)
+        campfireNode = VoxelPropBuilder.campfire()
+        campfireNode.position = SCNVector3(-1.8, 0, -2.4)
+        addChildNode(campfireNode)
+    }
+
+    private func buildOasisGrowth() {
+        oasisGrowth = CampOasisGrowthNode()
+        // Grow the oasis on the open side of camp, opposite the main tent.
+        oasisGrowth.position = SCNVector3(0.5, 0, -5.5)
+        addChildNode(oasisGrowth)
     }
 }

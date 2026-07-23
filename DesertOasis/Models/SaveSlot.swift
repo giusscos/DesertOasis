@@ -8,7 +8,7 @@ struct SaveSlot: Codable, Identifiable {
     var waterFound: Int
     var oasisFound: Int
     var tasksCompleted: Int
-    /// Water delivered to the camp barrel (0…1).
+    /// Water delivered to the home camp barrel (0…1). Mirrored into campProgress["home"].
     var campWaterLevel: Float
     var waterDeliveries: Int
     var isCarryingWater: Bool
@@ -17,10 +17,13 @@ struct SaveSlot: Codable, Identifiable {
     var desertSeed: UInt64
     var playerPositionX: Float
     var playerPositionZ: Float
+    /// Day clock 0…1 (0 = midnight, 0.5 = noon).
+    var timeOfDay: Float
+    /// Per-camp water + oasis growth.
+    var campProgress: [CampProgress]
 
     var isEmpty: Bool { characterGender == nil }
 
-    /// Slot label — prefers the stored timestamp name, else formats `lastUpdated`.
     var displayName: String {
         if let playerName, !playerName.isEmpty { return playerName }
         if let lastUpdated { return Self.timestampName(from: lastUpdated) }
@@ -43,6 +46,8 @@ struct SaveSlot: Codable, Identifiable {
         desertSeed = UInt64.random(in: 1...UInt64.max)
         playerPositionX = 0
         playerPositionZ = 0
+        timeOfDay = 0.32
+        campProgress = [CampProgress.home(from: 0)]
     }
 
     static func timestampName(from date: Date) -> String {
@@ -74,6 +79,21 @@ struct SaveSlot: Codable, Identifiable {
         }
     }
 
+    func progress(forCampId id: String) -> CampProgress {
+        campProgress.first { $0.id == id } ?? CampProgress(id: id)
+    }
+
+    mutating func upsertCampProgress(_ progress: CampProgress) {
+        if let idx = campProgress.firstIndex(where: { $0.id == progress.id }) {
+            campProgress[idx] = progress
+        } else {
+            campProgress.append(progress)
+        }
+        if progress.id == "home" {
+            campWaterLevel = progress.waterLevel
+        }
+    }
+
     // MARK: - Backward-compatible decode
 
     enum CodingKeys: String, CodingKey {
@@ -82,6 +102,7 @@ struct SaveSlot: Codable, Identifiable {
         case campWaterLevel, waterDeliveries, isCarryingWater
         case hasWaterCompass, hasWaterDetector
         case desertSeed, playerPositionX, playerPositionZ
+        case timeOfDay, campProgress
     }
 
     init(from decoder: Decoder) throws {
@@ -102,5 +123,11 @@ struct SaveSlot: Codable, Identifiable {
             ?? UInt64.random(in: 1...UInt64.max)
         playerPositionX = try c.decodeIfPresent(Float.self, forKey: .playerPositionX) ?? 0
         playerPositionZ = try c.decodeIfPresent(Float.self, forKey: .playerPositionZ) ?? 0
+        timeOfDay = try c.decodeIfPresent(Float.self, forKey: .timeOfDay) ?? 0.32
+        campProgress = try c.decodeIfPresent([CampProgress].self, forKey: .campProgress)
+            ?? [CampProgress.home(from: campWaterLevel)]
+        if !campProgress.contains(where: { $0.id == "home" }) {
+            campProgress.insert(CampProgress.home(from: campWaterLevel), at: 0)
+        }
     }
 }

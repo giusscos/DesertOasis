@@ -1,12 +1,13 @@
 import SceneKit
 import UIKit
 
-/// Chunked full-3D voxel world. Block coords are world-space integers; origin is world center.
+/// Sparse chunked voxel world with signed chunk coords — streams infinitely around the player.
 final class VoxelWorld {
     let blockSize: Float
     let seed: UInt64
-    /// Half-extent in blocks (world spans [-halfExtent, halfExtent)).
+    /// Soft half-extent used only for legacy noise scaling / oasis placement helpers.
     let halfExtent: Int
+    /// Kept for compatibility; streaming worlds ignore these as hard limits.
     let chunksX: Int
     let chunksZ: Int
 
@@ -24,22 +25,27 @@ final class VoxelWorld {
         rootNode.name = "voxel_world"
     }
 
-    var totalSize: Float { Float(halfExtent * 2) * blockSize }
+    /// Noise scale reference (meters) — keeps dune frequency stable in infinite worlds.
+    var totalSize: Float { VoxelMetrics.worldSizeMeters }
 
     // MARK: - Coords
 
-    func chunkKey(_ cx: Int, _ cz: Int) -> Int { cx * 10_000 + cz }
+    func chunkKey(_ cx: Int, _ cz: Int) -> Int {
+        // Pack signed 16-bit-ish coords into one Int key.
+        ((cx & 0xFFFF) << 16) | (cz & 0xFFFF)
+    }
 
+    /// Floor-division chunk index (works for negative block coords).
     func chunkCoord(blockX: Int, blockZ: Int) -> (Int, Int) {
-        let ox = blockX + halfExtent
-        let oz = blockZ + halfExtent
-        return (ox / VoxelChunk.sizeX, oz / VoxelChunk.sizeZ)
+        (Self.floorDiv(blockX, VoxelChunk.sizeX), Self.floorDiv(blockZ, VoxelChunk.sizeZ))
     }
 
     func localCoord(blockX: Int, blockY: Int, blockZ: Int) -> (Int, Int, Int) {
-        let ox = blockX + halfExtent
-        let oz = blockZ + halfExtent
-        return (ox % VoxelChunk.sizeX, blockY, oz % VoxelChunk.sizeZ)
+        (
+            Self.floorMod(blockX, VoxelChunk.sizeX),
+            blockY,
+            Self.floorMod(blockZ, VoxelChunk.sizeZ)
+        )
     }
 
     func worldPosition(blockX: Int, blockY: Int, blockZ: Int) -> SCNVector3 {
@@ -58,12 +64,16 @@ final class VoxelWorld {
         )
     }
 
+    func chunkOriginBlock(cx: Int, cz: Int) -> (Int, Int) {
+        (cx * VoxelChunk.sizeX, cz * VoxelChunk.sizeZ)
+    }
+
     // MARK: - Access
 
     func chunk(cx: Int, cz: Int, create: Bool = false) -> VoxelChunk? {
         let key = chunkKey(cx, cz)
         if let c = chunks[key] { return c }
-        guard create, cx >= 0, cx < chunksX, cz >= 0, cz < chunksZ else { return nil }
+        guard create else { return nil }
         let c = VoxelChunk(cx: cx, cz: cz)
         chunks[key] = c
         return c
@@ -71,9 +81,19 @@ final class VoxelWorld {
 
     func allChunks() -> [VoxelChunk] { Array(chunks.values) }
 
+    func hasChunk(cx: Int, cz: Int) -> Bool {
+        chunks[chunkKey(cx, cz)] != nil
+    }
+
+    func unloadChunk(cx: Int, cz: Int) {
+        let key = chunkKey(cx, cz)
+        guard chunks.removeValue(forKey: key) != nil else { return }
+        let name = "chunk_\(cx)_\(cz)"
+        rootNode.childNode(withName: name, recursively: false)?.removeFromParentNode()
+    }
+
     func block(at bx: Int, by: Int, bz: Int) -> VoxelType {
         guard by >= 0, by < VoxelChunk.sizeY else { return .air }
-        guard bx >= -halfExtent, bx < halfExtent, bz >= -halfExtent, bz < halfExtent else { return .air }
         let (cx, cz) = chunkCoord(blockX: bx, blockZ: bz)
         guard let chunk = chunk(cx: cx, cz: cz) else { return .air }
         let (lx, ly, lz) = localCoord(blockX: bx, blockY: by, blockZ: bz)
@@ -82,14 +102,12 @@ final class VoxelWorld {
 
     func setBlock(at bx: Int, by: Int, bz: Int, type: VoxelType) {
         guard by >= 0, by < VoxelChunk.sizeY else { return }
-        guard bx >= -halfExtent, bx < halfExtent, bz >= -halfExtent, bz < halfExtent else { return }
         let (cx, cz) = chunkCoord(blockX: bx, blockZ: bz)
         guard let chunk = self.chunk(cx: cx, cz: cz, create: true) else { return }
         let (lx, ly, lz) = localCoord(blockX: bx, blockY: by, blockZ: bz)
         chunk.setBlock(lx: lx, ly: ly, lz: lz, type: type)
     }
 
-    /// Top of the highest non-air block in the column (world Y of the top face).
     func surfaceY(atWorldX wx: Float, worldZ wz: Float) -> Float {
         let bx = Int(floor(wx / blockSize))
         let bz = Int(floor(wz / blockSize))
@@ -98,10 +116,12 @@ final class VoxelWorld {
                 return Float(by + 1) * blockSize
             }
         }
-        return 0
+        // Estimate from noise when chunk not loaded yet.
+        return Float(VoxelWorldGenerator(seed: seed).columnHeight(
+            bx: bx, bz: bz, totalSize: totalSize
+        )) * blockSize
     }
 
-    /// Top solid (non-water) surface — useful for oasis bowl depth checks.
     func solidSurfaceY(atWorldX wx: Float, worldZ wz: Float) -> Float {
         let bx = Int(floor(wx / blockSize))
         let bz = Int(floor(wz / blockSize))
@@ -111,27 +131,31 @@ final class VoxelWorld {
                 return Float(by + 1) * blockSize
             }
         }
-        return 0
+        return surfaceY(atWorldX: wx, worldZ: wz)
     }
 
-    // MARK: - Meshing
+    // MARK: - Streaming helpers
 
-    /// Chunk coords sorted nearest-to-farthest from world center (camp).
-    func chunkCoordinatesFromCenter() -> [(cx: Int, cz: Int)] {
+    /// Chunks in a square around a world position, nearest-first.
+    func chunkCoordinatesAround(worldX: Float, worldZ: Float, radiusChunks: Int) -> [(cx: Int, cz: Int)] {
+        let (bx, _, bz) = blockCoord(worldX: worldX, worldY: 0, worldZ: worldZ)
+        let (pcx, pcz) = chunkCoord(blockX: bx, blockZ: bz)
         var coords: [(Int, Int)] = []
-        coords.reserveCapacity(chunksX * chunksZ)
-        for cz in 0..<chunksZ {
-            for cx in 0..<chunksX {
-                coords.append((cx, cz))
+        for dz in -radiusChunks...radiusChunks {
+            for dx in -radiusChunks...radiusChunks {
+                coords.append((pcx + dx, pcz + dz))
             }
         }
-        let midX = Float(chunksX - 1) * 0.5
-        let midZ = Float(chunksZ - 1) * 0.5
         return coords.sorted { a, b in
-            let da = (Float(a.0) - midX) * (Float(a.0) - midX) + (Float(a.1) - midZ) * (Float(a.1) - midZ)
-            let db = (Float(b.0) - midX) * (Float(b.0) - midX) + (Float(b.1) - midZ) * (Float(b.1) - midZ)
+            let da = (a.0 - pcx) * (a.0 - pcx) + (a.1 - pcz) * (a.1 - pcz)
+            let db = (b.0 - pcx) * (b.0 - pcx) + (b.1 - pcz) * (b.1 - pcz)
             return da < db
         }
+    }
+
+    /// Initial load around camp (origin).
+    func chunkCoordinatesFromCenter(radiusChunks: Int = 10) -> [(cx: Int, cz: Int)] {
+        chunkCoordinatesAround(worldX: 0, worldZ: 0, radiusChunks: radiusChunks)
     }
 
     func remeshDirtyChunks() {
@@ -162,9 +186,8 @@ final class VoxelWorld {
 
         let node = SCNNode(geometry: geometry)
         node.name = name
-        let originX = Float(chunk.cx * VoxelChunk.sizeX - halfExtent) * blockSize
-        let originZ = Float(chunk.cz * VoxelChunk.sizeZ - halfExtent) * blockSize
-        node.position = SCNVector3(originX, 0, originZ)
+        let (originBX, originBZ) = chunkOriginBlock(cx: chunk.cx, cz: chunk.cz)
+        node.position = SCNVector3(Float(originBX) * blockSize, 0, Float(originBZ) * blockSize)
         node.castsShadow = false
         if animated {
             node.opacity = 0
@@ -176,5 +199,18 @@ final class VoxelWorld {
         } else {
             rootNode.addChildNode(node)
         }
+    }
+
+    // MARK: - Math
+
+    private static func floorDiv(_ a: Int, _ b: Int) -> Int {
+        let q = a / b
+        let r = a % b
+        return r == 0 ? q : (a < 0 ? q - 1 : q)
+    }
+
+    private static func floorMod(_ a: Int, _ b: Int) -> Int {
+        let r = a % b
+        return r >= 0 ? r : r + b
     }
 }

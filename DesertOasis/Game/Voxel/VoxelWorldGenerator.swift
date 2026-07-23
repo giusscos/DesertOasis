@@ -39,28 +39,31 @@ enum VoxelNoise {
 
 struct VoxelWorldGenerator {
     let seed: UInt64
-    /// Dune amplitude in blocks (meters / blockSize).
     let heightScale: Int
-    /// Flat-ish desert floor height in blocks.
     let baseHeight: Int
-    /// Camp pad radius in blocks.
     let campRadius: Int
+    /// All known camp pads (home + remote). Flattened during chunk gen.
+    var campSites: [CampSite]
 
-    /// Physical heights kept from the 1 m block era; converted using the world's block size.
     init(seed: UInt64,
          heightScaleMeters: Float = 8,
          baseHeightMeters: Float = 6,
          campRadiusMeters: Float = 12,
-         blockSize: Float = VoxelMetrics.blockSize) {
+         blockSize: Float = VoxelMetrics.blockSize,
+         campSites: [CampSite] = []) {
         self.seed = seed
         self.heightScale = max(2, Int((heightScaleMeters / blockSize).rounded()))
         self.baseHeight = max(2, Int((baseHeightMeters / blockSize).rounded()))
         self.campRadius = max(4, Int((campRadiusMeters / blockSize).rounded()))
+        self.campSites = campSites.isEmpty
+            ? CampSiteGenerator.sites(seed: seed)
+            : campSites
     }
 
-    /// Approximate world-meter height of the flat camp pad top face.
     var campSurfaceMeters: Float {
-        Float(campPadHeight(totalSize: VoxelMetrics.worldSizeMeters)) * VoxelMetrics.blockSize
+        Float(padHeight(for: campSites.first ?? CampSite(
+            id: "home", worldX: 0, worldZ: 0, isHome: true, padRadius: 18
+        ), totalSize: VoxelMetrics.worldSizeMeters)) * VoxelMetrics.blockSize
     }
 
     func columnHeight(bx: Int, bz: Int, totalSize: Float) -> Int {
@@ -70,53 +73,69 @@ struct VoxelWorldGenerator {
         return max(2, min(VoxelChunk.sizeY - 2, Int(h.rounded())))
     }
 
-    /// Pad height from nearby natural rim/center samples so camp sits with the desert,
-    /// not carved down to a fixed floor with dune walls around it.
-    func campPadHeight(totalSize: Float) -> Int {
+    func padHeight(for site: CampSite, totalSize: Float) -> Int {
         var sum = 0
         var count = 0
-        let r = Float(campRadius)
-        let steps = max(8, campRadius)
+        let r = site.padRadius / VoxelMetrics.blockSize
+        let steps = max(8, Int(r))
+        let cx = site.worldX / VoxelMetrics.blockSize
+        let cz = site.worldZ / VoxelMetrics.blockSize
         for i in 0..<steps {
             let angle = Float(i) / Float(steps) * Float.pi * 2
-            let bx = Int((cos(angle) * r).rounded())
-            let bz = Int((sin(angle) * r).rounded())
+            let bx = Int((cx + cos(angle) * r).rounded())
+            let bz = Int((cz + sin(angle) * r).rounded())
             sum += columnHeight(bx: bx, bz: bz, totalSize: totalSize)
             count += 1
         }
-        sum += columnHeight(bx: 0, bz: 0, totalSize: totalSize)
+        sum += columnHeight(bx: Int(cx.rounded()), bz: Int(cz.rounded()), totalSize: totalSize)
         count += 1
         return max(2, min(VoxelChunk.sizeY - 2, sum / count))
     }
 
-    /// Fills a single chunk column (terrain only — no oasis carving).
+    /// Legacy single-camp pad height (home).
+    func campPadHeight(totalSize: Float) -> Int {
+        if let home = campSites.first(where: { $0.isHome }) {
+            return padHeight(for: home, totalSize: totalSize)
+        }
+        return padHeight(for: CampSite(id: "home", worldX: 0, worldZ: 0, isHome: true, padRadius: 18),
+                         totalSize: totalSize)
+    }
+
     func generateChunk(into world: VoxelWorld, cx: Int, cz: Int) {
-        let half = world.halfExtent
         let totalSize = world.totalSize
         let bs = world.blockSize
         guard let chunk = world.chunk(cx: cx, cz: cz, create: true) else { return }
-        let baseBX = cx * VoxelChunk.sizeX - half
-        let baseBZ = cz * VoxelChunk.sizeZ - half
+        let (baseBX, baseBZ) = world.chunkOriginBlock(cx: cx, cz: cz)
         let sandDepth = max(1, Int((2.0 / bs).rounded()))
         let sandstoneDepth = max(1, Int((3.0 / bs).rounded()))
-        let padH = campPadHeight(totalSize: totalSize)
-        let campR = Float(campRadius)
-        // Soft ramp (~6 m) so dunes ease into the pad instead of forming cliffs.
         let blend = Float(max(4, Int((6.0 / bs).rounded())))
+
+        // Precompute pad heights per site touching this chunk.
+        let sitePads: [(CampSite, Int)] = campSites.map { ($0, padHeight(for: $0, totalSize: totalSize)) }
 
         for lz in 0..<VoxelChunk.sizeZ {
             for lx in 0..<VoxelChunk.sizeX {
                 let bx = baseBX + lx
                 let bz = baseBZ + lz
-                let distCamp = sqrt(Float(bx * bx + bz * bz))
                 var h = columnHeight(bx: bx, bz: bz, totalSize: totalSize)
-                if distCamp <= campR {
-                    h = padH
-                } else if distCamp < campR + blend {
-                    let t = (distCamp - campR) / blend
-                    let s = t * t * (3 - 2 * t)
-                    h = max(2, min(VoxelChunk.sizeY - 2,
-                                   Int((Float(padH) * (1 - s) + Float(h) * s).rounded())))
+
+                for (site, padH) in sitePads {
+                    let siteBX = site.worldX / bs
+                    let siteBZ = site.worldZ / bs
+                    let dist = sqrt(
+                        (Float(bx) - siteBX) * (Float(bx) - siteBX) +
+                        (Float(bz) - siteBZ) * (Float(bz) - siteBZ)
+                    )
+                    let campR = site.padRadius / bs
+                    if dist <= campR {
+                        h = padH
+                        break
+                    } else if dist < campR + blend {
+                        let t = (dist - campR) / blend
+                        let s = t * t * (3 - 2 * t)
+                        h = max(2, min(VoxelChunk.sizeY - 2,
+                                       Int((Float(padH) * (1 - s) + Float(h) * s).rounded())))
+                    }
                 }
 
                 for by in 0..<h {
@@ -134,66 +153,113 @@ struct VoxelWorldGenerator {
         }
     }
 
-    /// Places and carves oases into an already-filled world. Marks carved chunks dirty.
+    /// Places oases near camps and in the wilderness around a loaded region.
     @discardableResult
-    func placeAndCarveOases(into world: VoxelWorld, oasisCount: Int = 6) -> [OasisInfo] {
-        var oases = placeOases(world: world, count: oasisCount)
+    func placeAndCarveOases(into world: VoxelWorld,
+                            nearSites: [CampSite],
+                            oasisCount: Int = 6) -> [OasisInfo] {
+        var oases = placeOases(world: world, nearSites: nearSites, count: oasisCount)
         for i in oases.indices {
             carveOasis(world: world, oasis: &oases[i])
         }
         return oases
     }
 
-    /// Fills the world, flattens camp, carves oases (synchronous, full world).
+    @discardableResult
+    func placeAndCarveOases(into world: VoxelWorld, oasisCount: Int = 6) -> [OasisInfo] {
+        placeAndCarveOases(into: world, nearSites: Array(campSites.prefix(5)), oasisCount: oasisCount)
+    }
+
     @discardableResult
     func generate(into world: VoxelWorld, oasisCount: Int = 6) -> [OasisInfo] {
-        for cz in 0..<world.chunksZ {
-            for cx in 0..<world.chunksX {
-                generateChunk(into: world, cx: cx, cz: cz)
-            }
+        let coords = world.chunkCoordinatesFromCenter(radiusChunks: 10)
+        for c in coords {
+            generateChunk(into: world, cx: c.cx, cz: c.cz)
         }
         return placeAndCarveOases(into: world, oasisCount: oasisCount)
     }
 
-    private func placeOases(world: VoxelWorld, count: Int) -> [OasisInfo] {
+    private func placeOases(world: VoxelWorld, nearSites: [CampSite], count: Int) -> [OasisInfo] {
         var oases: [OasisInfo] = []
-        var rng = SeededRandom(seed: seed &+ 42)
+        var rng = SeededRandom(seed: seed &+ 42 &+ UInt64(nearSites.count) &* 17)
         let bs = world.blockSize
-        let minCampDistBlocks = 55 / bs
-        let minOasisSepBlocks = 60 / bs
+        let minOasisSep = 45 / bs
 
-        for _ in 0..<count {
-            var attempts = 0
-            while attempts < 50 {
-                let bx = Int(rng.nextFloat() * Float(world.halfExtent * 2)) - world.halfExtent
-                let bz = Int(rng.nextFloat() * Float(world.halfExtent * 2)) - world.halfExtent
-                let distFromCamp = sqrt(Float(bx * bx + bz * bz))
-                let h = columnHeight(bx: bx, bz: bz, totalSize: world.totalSize)
-                if h < baseHeight + max(2, heightScale / 2), distFromCamp > minCampDistBlocks {
-                    let tooClose = oases.contains {
-                        let ox = Int(floor($0.position.x / bs))
-                        let oz = Int(floor($0.position.z / bs))
-                        let dx = Float(ox - bx)
-                        let dz = Float(oz - bz)
-                        return sqrt(dx * dx + dz * dz) < minOasisSepBlocks
-                    }
-                    if !tooClose {
-                        let radius = 2.0 + rng.nextFloat() * 1.8 // meters (2–3.8 m — small desert water hole)
-                        oases.append(OasisInfo(
-                            position: SCNVector3(
-                                (Float(bx) + 0.5) * bs,
-                                Float(h) * bs,
-                                (Float(bz) + 0.5) * bs
-                            ),
-                            radius: radius
-                        ))
-                        break
-                    }
-                }
-                attempts += 1
+        // One oasis near each remote-ish site, plus wild fills.
+        for site in nearSites where !site.isHome {
+            if oases.count >= count { break }
+            if let oasis = tryPlaceOasis(
+                world: world, rng: &rng,
+                aroundX: site.worldX, aroundZ: site.worldZ,
+                minDistFromPoint: 18, maxDistFromPoint: 42,
+                existing: oases, minSepBlocks: minOasisSep
+            ) {
+                oases.append(oasis)
+            }
+        }
+
+        // Wild oases around home
+        let home = nearSites.first(where: \.isHome) ?? nearSites.first
+        let hx = home?.worldX ?? 0
+        let hz = home?.worldZ ?? 0
+        var attempts = 0
+        while oases.count < count && attempts < 80 {
+            attempts += 1
+            if let oasis = tryPlaceOasis(
+                world: world, rng: &rng,
+                aroundX: hx, aroundZ: hz,
+                minDistFromPoint: 55, maxDistFromPoint: 110,
+                existing: oases, minSepBlocks: minOasisSep
+            ) {
+                oases.append(oasis)
             }
         }
         return oases
+    }
+
+    private func tryPlaceOasis(world: VoxelWorld,
+                               rng: inout SeededRandom,
+                               aroundX: Float,
+                               aroundZ: Float,
+                               minDistFromPoint: Float,
+                               maxDistFromPoint: Float,
+                               existing: [OasisInfo],
+                               minSepBlocks: Float) -> OasisInfo? {
+        let bs = world.blockSize
+        for _ in 0..<12 {
+            let angle = rng.nextFloat() * Float.pi * 2
+            let dist = minDistFromPoint + rng.nextFloat() * (maxDistFromPoint - minDistFromPoint)
+            let wx = aroundX + cos(angle) * dist
+            let wz = aroundZ + sin(angle) * dist
+            let bx = Int(floor(wx / bs))
+            let bz = Int(floor(wz / bs))
+            let h = columnHeight(bx: bx, bz: bz, totalSize: world.totalSize)
+            guard h < baseHeight + max(2, heightScale / 2) else { continue }
+
+            // Keep clear of camp pads
+            let onPad = campSites.contains {
+                let dx = wx - $0.worldX
+                let dz = wz - $0.worldZ
+                return dx * dx + dz * dz < ($0.padRadius + 4) * ($0.padRadius + 4)
+            }
+            if onPad { continue }
+
+            let tooClose = existing.contains {
+                let ox = Int(floor($0.position.x / bs))
+                let oz = Int(floor($0.position.z / bs))
+                let dx = Float(ox - bx)
+                let dz = Float(oz - bz)
+                return sqrt(dx * dx + dz * dz) < minSepBlocks
+            }
+            if tooClose { continue }
+
+            let radius = 2.0 + rng.nextFloat() * 1.8
+            return OasisInfo(
+                position: SCNVector3((Float(bx) + 0.5) * bs, Float(h) * bs, (Float(bz) + 0.5) * bs),
+                radius: radius
+            )
+        }
+        return nil
     }
 
     private func carveOasis(world: VoxelWorld, oasis: inout OasisInfo) {

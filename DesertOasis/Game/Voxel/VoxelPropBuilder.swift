@@ -221,31 +221,32 @@ enum VoxelPropBuilder {
         root.name = "voxel_tent"
         root.scale = SCNVector3(scale, scale, scale)
 
-        // A-frame from many cubes along two slanted planes
-        let s = VoxelSculpture(sizeX: 36, sizeY: 38, sizeZ: 50,
+        // A-frame that meets cleanly at the ridge (no gappy peak).
+        let s = VoxelSculpture(sizeX: 36, sizeY: 40, sizeZ: 50,
                                origin: SIMD3<Float>(-18, 0, -25) * uf)
+        let centerX = 18
+        let baseHalf = 16
+        let peakY = 36
+        let slope = Float(baseHalf - 1) / Float(peakY)
 
-        // Left / right canvas walls — stepped roof
         for z in 0..<50 {
-            for y in 0..<36 {
-                let halfWidth = 16 - Int(Float(y) * 0.42)
-                guard halfWidth > 1 else { continue }
-                // Left wall thickness
-                s.set(18 - halfWidth, y, z, .canvas)
-                s.set(18 - halfWidth + 1, y, z, .canvas)
-                // Right wall
-                s.set(18 + halfWidth - 1, y, z, .canvas)
-                s.set(18 + halfWidth - 2, y, z, .canvas)
+            for y in 0..<peakY {
+                let halfWidth = max(1, baseHalf - Int((Float(y) * slope).rounded()))
+                s.set(centerX - halfWidth, y, z, .canvas)
+                s.set(centerX - halfWidth + 1, y, z, .canvas)
+                s.set(centerX + halfWidth - 1, y, z, .canvas)
+                s.set(centerX + halfWidth - 2, y, z, .canvas)
             }
-        }
-        // Ridge beam
-        for z in 0..<50 {
-            s.fillBox(x0: 17, y0: 35, z0: z, x1: 18, y1: 36, z1: z, type: .darkWood)
+            // Closed peak + dark ridge beam
+            s.set(centerX - 1, peakY, z, .canvas)
+            s.set(centerX, peakY, z, .canvas)
+            s.set(centerX - 1, peakY + 1, z, .darkWood)
+            s.set(centerX, peakY + 1, z, .darkWood)
         }
         // Back wall
         for y in 0..<22 {
-            let halfWidth = 16 - Int(Float(y) * 0.42)
-            for x in (18 - halfWidth)...(18 + halfWidth) {
+            let halfWidth = max(1, baseHalf - Int((Float(y) * slope).rounded()))
+            for x in (centerX - halfWidth)...(centerX + halfWidth) {
                 s.set(x, y, 2, .canvas)
                 s.set(x, y, 3, .canvas)
             }
@@ -289,11 +290,15 @@ enum VoxelPropBuilder {
 
         root.addChildNode(s.makeNode(name: "barrel_mesh"))
 
-        let water = VoxelSculpture(sizeX: 14, sizeY: 2, sizeZ: 14, origin: SIMD3<Float>(-7, 0, -7) * uf)
-        water.fillCylinder(c0: 7, c1: 7, a0: 0, a1: 1, radius: 5.5, type: .water)
-        let waterNode = water.makeNode(name: "water_surface")
-        waterNode.position.y = 0.08
-        waterNode.scale.y = 0.15
+        // Solid opaque water column (authored full); game scales Y from the floor.
+        let water = VoxelSculpture(sizeX: 12, sizeY: 16, sizeZ: 12,
+                                   origin: SIMD3<Float>(-6, 0, -6) * uf)
+        water.fillCylinder(c0: 6, c1: 6, a0: 0, a1: 15, radius: 5.2, type: .cloth)
+        let waterNode = water.makeNode(name: "water_surface") { _ in
+            UIColor(red: 0.18, green: 0.48, blue: 0.78, alpha: 1)
+        }
+        waterNode.position.y = 0.12
+        waterNode.scale.y = 0.02
         waterNode.isHidden = true
         root.addChildNode(waterNode)
 
@@ -460,27 +465,37 @@ enum VoxelPropBuilder {
 
     // MARK: - Lobby furniture
 
-    static func lobbyTentShell() -> SCNNode {
+    static func lobbyTentShell(includeSign: Bool = true) -> SCNNode {
         let root = SCNNode()
         root.name = "lobby_tent"
 
         // Coarser unit for the large lobby shell (still stair-stepped cubes, fewer cells).
         let lu = uf * 2.5
-        let s = VoxelSculpture(sizeX: 56, sizeY: 40, sizeZ: 88,
+        let s = VoxelSculpture(sizeX: 56, sizeY: 44, sizeZ: 88,
                                origin: SIMD3<Float>(-28, 0, -44) * lu)
+        let centerX = 28
+        let baseHalf = 24
+        let peakY = 38
+        // Slope so walls meet at the peak (halfWidth → 1) instead of leaving a gappy ridge.
+        let slope = Float(baseHalf - 1) / Float(peakY)
+
         for z in 0..<88 {
-            for y in 0..<36 {
-                let halfWidth = 24 - Int(Float(y) * 0.55)
-                guard halfWidth > 2 else { continue }
-                s.set(28 - halfWidth, y, z, .canvas)
-                s.set(28 - halfWidth + 1, y, z, .canvas)
-                s.set(28 + halfWidth - 1, y, z, .canvas)
-                s.set(28 + halfWidth - 2, y, z, .canvas)
+            for y in 0..<peakY {
+                let halfWidth = max(1, baseHalf - Int((Float(y) * slope).rounded()))
+                s.set(centerX - halfWidth, y, z, .canvas)
+                s.set(centerX - halfWidth + 1, y, z, .canvas)
+                s.set(centerX + halfWidth - 1, y, z, .canvas)
+                s.set(centerX + halfWidth - 2, y, z, .canvas)
             }
+            // Closed peak + ridge beam
+            s.set(centerX - 1, peakY, z, .canvas)
+            s.set(centerX, peakY, z, .canvas)
+            s.set(centerX - 1, peakY + 1, z, .darkWood)
+            s.set(centerX, peakY + 1, z, .darkWood)
         }
         for y in 0..<24 {
-            let halfWidth = 24 - Int(Float(y) * 0.55)
-            for x in (28 - halfWidth)...(28 + halfWidth) {
+            let halfWidth = max(1, baseHalf - Int((Float(y) * slope).rounded()))
+            for x in (centerX - halfWidth)...(centerX + halfWidth) {
                 s.set(x, y, 1, .canvas)
                 s.set(x, y, 2, .canvas)
             }
@@ -492,11 +507,13 @@ enum VoxelPropBuilder {
         lantern.name = "lantern"
         root.addChildNode(lantern)
 
-        let signS = VoxelSculpture(sizeX: 18, sizeY: 4, sizeZ: 2, origin: SIMD3<Float>(-9, 0, -1) * lu)
-        signS.fillBox(x0: 0, y0: 0, z0: 0, x1: 17, y1: 3, z1: 1, type: .wood)
-        let sign = signS.makeNode(name: "sign_text", unit: lu)
-        sign.position = SCNVector3(0, 3.0, 5.2)
-        root.addChildNode(sign)
+        if includeSign {
+            let signS = VoxelSculpture(sizeX: 18, sizeY: 4, sizeZ: 2, origin: SIMD3<Float>(-9, 0, -1) * lu)
+            signS.fillBox(x0: 0, y0: 0, z0: 0, x1: 17, y1: 3, z1: 1, type: .wood)
+            let sign = signS.makeNode(name: "sign_text", unit: lu)
+            sign.position = SCNVector3(0, 3.0, 5.2)
+            root.addChildNode(sign)
+        }
 
         return root
     }

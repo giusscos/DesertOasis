@@ -41,8 +41,7 @@ enum VoxelMesher {
         indices.reserveCapacity(6144)
 
         let bs = world.blockSize
-        let baseBX = chunk.cx * VoxelChunk.sizeX - world.halfExtent
-        let baseBZ = chunk.cz * VoxelChunk.sizeZ - world.halfExtent
+        let (baseBX, baseBZ) = world.chunkOriginBlock(cx: chunk.cx, cz: chunk.cz)
 
         for ly in 0..<VoxelChunk.sizeY {
             for lz in 0..<VoxelChunk.sizeZ {

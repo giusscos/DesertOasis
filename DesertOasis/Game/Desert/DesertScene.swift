@@ -5,12 +5,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     private(set) var playerNode: PlayerNode!
     private(set) var toolRig: PlayerToolRig!
+    /// Home camp (always present after build).
     private(set) var camp: CampNode!
+    private(set) var camps: [CampNode] = []
     private(set) var npcs: [NPCNode] = []
     private(set) var oases: [OasisInfo] = []
     private(set) var waterBodies: [OasisWaterNode] = []
     private var voxelWorld: VoxelWorld!
     private var worldSeed: UInt64 = 0
+    private var campSites: [CampSite] = []
+    private var spawnedCampIDs: Set<String> = []
+    private var placedOasisKeys: Set<String> = []
+    private var slotCampProgress: [String: CampProgress] = [:]
 
     let cameraNode = SCNNode()
     let cameraArmNode = SCNNode()
@@ -19,31 +25,45 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var cameraPitch: Float = -0.32
     private let cameraDistance: Float = 8.2
     private let cameraMinDistance: Float = 1.15
-    /// Solid camera sphere radius used for collision.
     private let cameraRadius: Float = 0.4
-    /// How quickly the view direction orbits toward the desired boom angle.
     private let cameraOrbitSpeed: Float = 18
-    /// How quickly boom length expands/contracts along the current view ray.
     private let cameraDistanceSpeed: Float = 14
     private var cameraWorldPosition: SCNVector3?
     private let cameraPitchMin: Float = -1.05
     private let cameraPitchMax: Float = 0.40
     private let playerCollisionRadius: Float = 0.32
 
+    let dayNight = DayNightCycle()
+    private var sunNode: SCNNode!
+    private var ambientLightNode: SCNNode!
+    private var skyNode: SCNNode!
+    private(set) var isSleeping = false
+    private var sleepCameraNode: SCNNode?
+
     var onNPCProximity: ((NPCNode) -> Void)?
     var onOasisReached: ((OasisInfo) -> Void)?
     var onWaterCollected: (() -> Void)?
-    var onWaterDelivered: ((Float, Bool, Bool) -> Void)?
+    /// level, unlockedCompass, unlockedDetector, campId
+    var onWaterDelivered: ((Float, Bool, Bool, String) -> Void)?
     var onNearBarrel: ((Bool) -> Void)?
-    var onCampDrained: ((Float) -> Void)?
+    var onCampDrained: ((Float, String) -> Void)?
     var onWaterGivenToNPC: ((NPCNode) -> Void)?
     var onNearWater: ((Bool) -> Void)?
+    var onNearBed: ((Bool) -> Void)?
+    var onNearSettingsTable: ((Bool) -> Void)?
+    var onOasisGrown: ((String, OasisGrowthStage, Float, Bool) -> Void)?
+    var onCampDiscovered: ((CampSite) -> Void)?
+    var onTimeOfDayChanged: ((Float) -> Void)?
+    var onSleepFinished: (() -> Void)?
 
     private var playerHorizontalSpeed: Float = 0
     private var isInWater = false
     private var toolTime: Float = 0
     private var wasNearBarrel = false
+    private var wasNearBed = false
+    private var wasNearSettings = false
     private var deliveryCount = 0
+    private var timePersistAccumulator: Float = 0
 
     // Oasis depletion
     private var wasNearCollectableWater = false
@@ -51,10 +71,16 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var oasisRefillTimers: [ObjectIdentifier: Float] = [:]
     private let oasisRefillTime: Float = 90.0
 
-    // Camp drain
+    // Camp drain (evaporation — separate from NPC irrigation)
     private var campDrainAccumulator: Float = 0
-    private let campDrainInterval: Float = 18.0
-    private let campDrainAmount: Float = 0.007
+    private let campDrainInterval: Float = 22.0
+    private let campDrainAmount: Float = 0.004
+
+    // Streaming
+    private let streamLoadRadius = 11
+    private let streamUnloadRadius = 15
+    private var streamPending: [(cx: Int, cz: Int)] = []
+    private let streamChunksPerFrame = 2
 
     // Progressive world build
     private(set) var isBuildingWorld = false
@@ -62,7 +88,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var buildGenerator: VoxelWorldGenerator?
     private var pendingChunkCoords: [(cx: Int, cz: Int)] = []
     private var buildChunkIndex = 0
-    private let chunksPerFrame = 6
+    private let chunksPerFrame = 8
 
     var onBuildProgress: ((Float) -> Void)?
     var onBuildComplete: (() -> Void)?
@@ -75,17 +101,21 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         isBuildingWorld = true
         buildSlot = slot
         worldSeed = slot.desertSeed
-        background.contents = skyboxGradient()
         deliveryCount = slot.waterDeliveries
+        campSites = CampSiteGenerator.sites(seed: slot.desertSeed)
+        slotCampProgress = Dictionary(uniqueKeysWithValues: slot.campProgress.map { ($0.id, $0) })
+        dayNight.setTimeOfDay(slot.timeOfDay)
 
         setupLighting()
         setupSky()
+        dayNight.attach(scene: self, sun: sunNode, ambient: ambientLightNode, sky: skyNode)
 
         voxelWorld = VoxelWorld(seed: slot.desertSeed)
         rootNode.addChildNode(voxelWorld.rootNode)
 
-        buildGenerator = VoxelWorldGenerator(seed: slot.desertSeed)
-        pendingChunkCoords = voxelWorld.chunkCoordinatesFromCenter()
+        buildGenerator = VoxelWorldGenerator(seed: slot.desertSeed, campSites: campSites)
+        // Initial ring around home — rest streams as the player explores.
+        pendingChunkCoords = voxelWorld.chunkCoordinatesFromCenter(radiusChunks: 10)
         buildChunkIndex = 0
 
         setupOverviewCamera()
@@ -130,40 +160,72 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private func finalizeBuild() {
         guard let slot = buildSlot, let generator = buildGenerator else { return }
 
-        oases = generator.placeAndCarveOases(into: voxelWorld, oasisCount: 6)
+        let homeSites = campSites.filter(\.isHome)
+        let ring1 = campSites.filter { !$0.isHome }.prefix(4)
+        let initialSites = homeSites + Array(ring1)
+        oases = generator.placeAndCarveOases(into: voxelWorld, nearSites: initialSites, oasisCount: 6)
+        for oasis in oases {
+            placedOasisKeys.insert(oasisKey(oasis))
+        }
         voxelWorld.remeshDirtyChunks()
         onBuildProgress?(0.96)
 
-        let campGround = voxelWorld.surfaceY(atWorldX: 0, worldZ: 0)
-        camp = CampNode(groundHeight: campGround, world: voxelWorld)
-        camp.setFillLevel(slot.campWaterLevel)
-        rootNode.addChildNode(camp)
+        spawnCamp(site: campSites.first(where: \.isHome)!, progress: slot.progress(forCampId: "home"))
+        camp = camps.first(where: { $0.site.isHome })
 
         waterBodies.removeAll()
         for oasis in oases {
-            let container = SCNNode()
-            container.position = SCNVector3(oasis.position.x, oasis.position.y, oasis.position.z)
-            let water = OasisWaterNode(radius: oasis.radius, resolution: 18)
-            container.addChildNode(water)
-            rootNode.addChildNode(container)
-            waterBodies.append(water)
+            addWaterBody(for: oasis)
         }
 
-        let props = VoxelPropBuilder.scatterProps(world: voxelWorld, oases: oases, seed: slot.desertSeed)
+        let props = VoxelPropBuilder.scatterProps(
+            world: voxelWorld, oases: oases, seed: slot.desertSeed, campClearRadius: 26
+        )
         rootNode.addChildNode(props)
 
-        spawnNPCs()
+        spawnNPCs(for: camp)
         setupPlayer(slot: slot)
         tearDownOverviewCamera()
         setupCamera()
         setupPhysics()
 
         buildSlot = nil
-        buildGenerator = nil
+        // Keep generator for streaming / remote oasis carving.
         pendingChunkCoords = []
         isBuildingWorld = false
         onBuildProgress?(1)
         onBuildComplete?()
+    }
+
+    private func oasisKey(_ oasis: OasisInfo) -> String {
+        String(format: "%.0f_%.0f", oasis.position.x, oasis.position.z)
+    }
+
+    private func addWaterBody(for oasis: OasisInfo) {
+        let container = SCNNode()
+        container.position = SCNVector3(oasis.position.x, oasis.position.y, oasis.position.z)
+        let water = OasisWaterNode(radius: oasis.radius, resolution: 18)
+        container.addChildNode(water)
+        rootNode.addChildNode(container)
+        waterBodies.append(water)
+    }
+
+    @discardableResult
+    private func spawnCamp(site: CampSite, progress: CampProgress) -> CampNode {
+        let ground = voxelWorld.surfaceY(atWorldX: site.worldX, worldZ: site.worldZ)
+        let node = CampNode(site: site, groundHeight: ground, world: voxelWorld)
+        node.setFillLevel(progress.waterLevel)
+        let stage = OasisGrowthStage(rawValue: progress.oasisStage) ?? .barren
+        node.restoreOasis(stage: stage, progress: progress.oasisProgress)
+        node.onIrrigated = { [weak self] level, oasisStage, oasisProg, advanced in
+            guard let self else { return }
+            self.onOasisGrown?(site.id, oasisStage, oasisProg, advanced)
+            self.onCampDrained?(level, site.id)
+        }
+        rootNode.addChildNode(node)
+        camps.append(node)
+        spawnedCampIDs.insert(site.id)
+        return node
     }
 
     private func setupOverviewCamera() {
@@ -200,7 +262,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         sun.castsShadow = true
         sun.shadowRadius = 4
         sun.shadowColor = UIColor(white: 0, alpha: 0.4)
-        let sunNode = SCNNode()
+        sunNode = SCNNode()
+        sunNode.name = "sun"
         sunNode.light = sun
         sunNode.eulerAngles = SCNVector3(-Float.pi * 0.45, Float.pi * 0.25, 0)
         rootNode.addChildNode(sunNode)
@@ -209,23 +272,24 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         ambient.type = .ambient
         ambient.color = UIColor(red: 0.62, green: 0.72, blue: 0.85, alpha: 1)
         ambient.intensity = 420
-        let ambientNode = SCNNode()
-        ambientNode.light = ambient
-        rootNode.addChildNode(ambientNode)
+        ambientLightNode = SCNNode()
+        ambientLightNode.name = "ambient"
+        ambientLightNode.light = ambient
+        rootNode.addChildNode(ambientLightNode)
     }
 
     // MARK: - Sky
 
     private func setupSky() {
-        let sky = SCNNode(geometry: SCNSphere(radius: 400))
-        sky.name = "sky"
+        skyNode = SCNNode(geometry: SCNSphere(radius: 800))
+        skyNode.name = "sky"
         let mat = SCNMaterial()
         mat.diffuse.contents = skyboxGradient()
         mat.isDoubleSided = true
         mat.lightingModel = .constant
-        sky.geometry?.firstMaterial = mat
-        sky.geometry?.firstMaterial?.cullMode = .front
-        rootNode.addChildNode(sky)
+        skyNode.geometry?.firstMaterial = mat
+        skyNode.geometry?.firstMaterial?.cullMode = .front
+        rootNode.addChildNode(skyNode)
     }
 
     private func skyboxGradient() -> UIColor {
@@ -579,40 +643,49 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     // MARK: - NPCs
 
-    private func spawnNPCs() {
-        var rng = SeededRandom(seed: worldSeed &+ 12345)
-        let half = voxelWorld.totalSize * 0.5
-        let footprints = camp.tentFootprints
+    private func spawnNPCs(for campNode: CampNode?) {
+        guard let campNode else { return }
+        var rng = SeededRandom(seed: worldSeed &+ 12345 &+ Self.stableSeed(campNode.site.id))
+        let footprints = campNode.tentFootprints
+        let cx = campNode.position.x
+        let cz = campNode.position.z
 
         func blocked(_ wx: Float, _ wz: Float) -> Bool {
             footprints.contains { $0.contains(x: wx, z: wz) }
         }
 
-        // Open camp spots — clear of tent footprints (tent XZ ≈ (0,3.2), (±6–7,−3), (−3.5,−7)).
-        let campPersonalities: [NPCPersonality] = [.elder, .child, .merchant]
+        let campPersonalities: [NPCPersonality] = campNode.site.isHome
+            ? [.elder, .child, .merchant]
+            : [.elder, .merchant]
+
         for personality in campPersonalities {
-            let spot = randomCampSpot(rng: &rng, isBlocked: blocked)
-                ?? openCampFallback(for: personality, isBlocked: blocked)
+            let spot = randomCampSpot(aroundX: cx, aroundZ: cz, rng: &rng, isBlocked: blocked)
+                ?? (cx + 4, cz + 2)
             let h = groundY(x: spot.0, z: spot.1)
             let npc = NPCNode(personality: personality, position: SCNVector3(spot.0, h, spot.1))
+            let padLimit = campNode.site.padRadius - 1
             npc.configureWander(radius: 5.5, groundY: { [weak self] x, z in
                 self?.groundY(x: x, z: z) ?? 0
             }, isBlocked: { [weak self] x, z in
                 guard let self else { return true }
-                // Stay near camp pad and out of tents.
-                if sqrt(x * x + z * z) > 11 { return true }
-                return self.camp.isInsideTent(worldX: x, worldZ: z)
+                let dx = x - cx
+                let dz = z - cz
+                if sqrt(dx * dx + dz * dz) > padLimit { return true }
+                return self.camps.contains { $0.isInsideTent(worldX: x, worldZ: z) }
             })
             rootNode.addChildNode(npc)
             npcs.append(npc)
         }
 
+        // Wild travellers only from the home camp spawn.
+        guard campNode.site.isHome else { return }
         for personality: NPCPersonality in [.wanderer, .lost] {
             var pos = SCNVector3(40, 0, 40)
             for _ in 0..<40 {
-                let wx = rng.nextFloat() * voxelWorld.totalSize - half
-                let wz = rng.nextFloat() * voxelWorld.totalSize - half
-                if sqrt(wx * wx + wz * wz) < 35 { continue }
+                let angle = rng.nextFloat() * Float.pi * 2
+                let dist = 40 + rng.nextFloat() * 50
+                let wx = cos(angle) * dist
+                let wz = sin(angle) * dist
                 if blocked(wx, wz) { continue }
                 let h = groundY(x: wx, z: wz)
                 if h < VoxelWorldGenerator(seed: worldSeed).campSurfaceMeters + 3 {
@@ -624,22 +697,33 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             npc.configureWander(radius: 9, groundY: { [weak self] x, z in
                 self?.groundY(x: x, z: z) ?? 0
             }, isBlocked: { [weak self] x, z in
-                self?.camp.isInsideTent(worldX: x, worldZ: z) ?? false
+                self?.camps.contains { $0.isInsideTent(worldX: x, worldZ: z) } ?? false
             })
             rootNode.addChildNode(npc)
             npcs.append(npc)
         }
     }
 
-    private func randomCampSpot(rng: inout SeededRandom,
+    /// Deterministic non-trapping seed from a string (hashValue can be negative → UInt64() traps).
+    private static func stableSeed(_ string: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in string.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x1000_0000_01b3
+        }
+        return hash
+    }
+
+    private func randomCampSpot(aroundX: Float,
+                                aroundZ: Float,
+                                rng: inout SeededRandom,
                                 isBlocked: (Float, Float) -> Bool) -> (Float, Float)? {
         for _ in 0..<50 {
             let angle = rng.nextFloat() * Float.pi * 2
             let dist = 3.5 + rng.nextFloat() * 6.5
-            let wx = cos(angle) * dist
-            let wz = sin(angle) * dist
+            let wx = aroundX + cos(angle) * dist
+            let wz = aroundZ + sin(angle) * dist
             if isBlocked(wx, wz) { continue }
-            // Keep clear of other already-spawned NPCs
             let tooClose = npcs.contains {
                 let dx = $0.position.x - wx
                 let dz = $0.position.z - wz
@@ -649,23 +733,6 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             return (wx, wz)
         }
         return nil
-    }
-
-    private func openCampFallback(for personality: NPCPersonality,
-                                  isBlocked: (Float, Float) -> Bool) -> (Float, Float) {
-        let candidates: [(Float, Float)] = [
-            (-4.0, 2.5), (5.0, 1.5), (2.0, -5.0),
-            (4.5, -4.0), (-5.0, 4.0), (1.0, 5.5),
-        ]
-        for c in candidates where !isBlocked(c.0, c.1) {
-            return c
-        }
-        switch personality {
-        case .elder:    return (-4.0, 2.5)
-        case .child:    return (5.0, 1.5)
-        case .merchant: return (2.0, -5.0)
-        default:        return (4.0, 4.0)
-        }
     }
 
     // MARK: - Physics
@@ -693,6 +760,10 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private let heightEpsilon: Float = 0.12
 
     func setMoveInput(dx: Float, dy: Float) {
+        guard !isSleeping else {
+            moveInput = .zero
+            return
+        }
         var input = SIMD2<Float>(dx, dy)
         let mag = simd_length(input)
         if mag > 1 {
@@ -702,11 +773,12 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     }
 
     func setRunning(_ running: Bool) {
+        guard !isSleeping else { return }
         isRunning = running
     }
 
     func jump() {
-        guard isGrounded, !isInWater else { return }
+        guard !isSleeping, isGrounded, !isInWater else { return }
         beginAirborne(velocity: jumpSpeed)
     }
 
@@ -719,21 +791,55 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     func update(deltaTime: Float) {
         guard !isBuildingWorld, playerNode != nil else { return }
         let dt = max(0, min(deltaTime, 1.0 / 20.0))
-        toolTime += dt
-        campDrainAccumulator += dt
-        if campDrainAccumulator >= campDrainInterval, let camp {
-            campDrainAccumulator -= campDrainInterval
-            let level = camp.drainWater(amount: campDrainAmount)
-            onCampDrained?(level)
+
+        if isSleeping {
+            // Sleep sequence drives its own time; still refresh sky via dayNight.apply.
+            return
         }
+
+        toolTime += dt
+        dayNight.update(deltaTime: dt)
+        timePersistAccumulator += dt
+        if timePersistAccumulator >= 4 {
+            timePersistAccumulator = 0
+            onTimeOfDayChanged?(dayNight.timeOfDay)
+        }
+
+        campDrainAccumulator += dt
+        if campDrainAccumulator >= campDrainInterval {
+            campDrainAccumulator -= campDrainInterval
+            for c in camps {
+                let level = c.drainWater(amount: campDrainAmount)
+                onCampDrained?(level, c.site.id)
+            }
+        }
+
+        for c in camps {
+            let hasNPCs = npcs.contains {
+                let dx = $0.position.x - c.position.x
+                let dz = $0.position.z - c.position.z
+                return dx * dx + dz * dz < (c.site.padRadius + 2) * (c.site.padRadius + 2)
+                    && !$0.personality.canReceiveWater
+            }
+            c.updateIrrigation(deltaTime: dt, hasCampNPCs: hasNPCs || c.site.isHome)
+        }
+
         applyMovement(deltaTime: dt)
         updateNPCs(deltaTime: dt)
         updateWater(deltaTime: dt)
         updateTools()
         checkProximity()
         checkBarrelProximity()
+        checkBedProximity()
+        updateStreaming()
+        discoverNearbyCamps()
         syncCameraFollow()
         resolveCameraCollision(deltaTime: dt)
+
+        // Keep sky dome centered on player so it never clips at the horizon.
+        if let playerNode {
+            skyNode?.position = SCNVector3(playerNode.position.x, 0, playerNode.position.z)
+        }
     }
 
     private func updateNPCs(deltaTime: Float) {
@@ -786,14 +892,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             playerNode.setWalking(false)
         }
 
-        if let camp {
+        if !camps.isEmpty {
             let bodyY = playerNode.position.y + 0.7
-            let resolved = camp.resolvePlayerXZ(
-                from: SIMD2(prevX, prevZ),
-                to: SIMD2(nextX, nextZ),
-                worldY: bodyY,
-                radius: playerCollisionRadius
-            )
+            var resolved = SIMD2(nextX, nextZ)
+            let prev = SIMD2(prevX, prevZ)
+            for c in camps {
+                resolved = c.resolvePlayerXZ(
+                    from: prev,
+                    to: resolved,
+                    worldY: bodyY,
+                    radius: playerCollisionRadius
+                )
+            }
             nextX = resolved.x
             nextZ = resolved.y
         }
@@ -946,16 +1056,17 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     }
 
     func rotateCamera(yawDelta: Float, pitchDelta: Float = 0) {
+        guard !isSleeping else { return }
         cameraArmNode.eulerAngles.y -= yawDelta
         cameraPitch = max(cameraPitchMin, min(cameraPitchMax, cameraPitch + pitchDelta))
         cameraPitchNode.eulerAngles.x = cameraPitch
-        // Keep collision progressive while orbiting (approx one display frame).
         resolveCameraCollision(deltaTime: 1.0 / 60.0)
     }
 
     /// Backward-compatible yaw-only helper.
-    func rotateCamera(by delta: Float) {
-        rotateCamera(yawDelta: delta, pitchDelta: 0)
+    /// Active POV — orbit camera, or cinematic sleep camera during timelapse.
+    var activeCameraNode: SCNNode {
+        sleepCameraNode ?? cameraNode
     }
 
     // MARK: - Water carry / deliver
@@ -988,12 +1099,14 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     @discardableResult
     func tryDeliverWater() -> Bool {
-        guard let toolRig, let camp, let playerNode else { return false }
+        guard let toolRig, let playerNode else { return false }
         guard toolRig.isCarryingWater else { return false }
-        guard camp.canDeliver(at: playerNode.position) else { return false }
+        guard let target = camps.first(where: { $0.canDeliver(at: playerNode.position) }) else {
+            return false
+        }
 
         toolRig.setCarryingWater(false)
-        let level = camp.deliverWater()
+        let level = target.deliverWater()
         deliveryCount += 1
 
         var unlockedCompass = false
@@ -1007,16 +1120,176 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             unlockedDetector = true
         }
 
-        onWaterDelivered?(level, unlockedCompass, unlockedDetector)
+        onWaterDelivered?(level, unlockedCompass, unlockedDetector, target.site.id)
         return true
     }
 
     var canDeliverNow: Bool {
-        guard let toolRig, let camp, let playerNode else { return false }
-        return toolRig.isCarryingWater && camp.canDeliver(at: playerNode.position)
+        guard let toolRig, let playerNode else { return false }
+        return toolRig.isCarryingWater && camps.contains { $0.canDeliver(at: playerNode.position) }
     }
 
     var isCarryingWater: Bool { toolRig?.isCarryingWater == true }
+
+    var nearestCampWithBed: CampNode? {
+        guard let playerNode else { return nil }
+        return camps.first { $0.isNearBed(worldPosition: playerNode.position) }
+    }
+
+    // MARK: - Sleep / skip night
+
+    /// Timelapse: camera looks at sunset over the camping zone, then wakes at morning.
+    func beginSleep(completion: (() -> Void)? = nil) {
+        guard !isSleeping, let playerNode, let sleepCamp = nearestCampWithBed ?? camp else { return }
+        isSleeping = true
+        moveInput = .zero
+        playerNode.setWalking(false)
+
+        // Elevated cinematic camera looking west toward sunset + down at camp.
+        let cam = SCNNode()
+        let camera = SCNCamera()
+        camera.fieldOfView = 58
+        camera.zNear = 0.3
+        camera.zFar = 900
+        cam.camera = camera
+        let campPos = sleepCamp.position
+        cam.position = SCNVector3(campPos.x + 14, campPos.y + 11, campPos.z + 18)
+        let look = SCNNode()
+        look.position = SCNVector3(campPos.x - 8, campPos.y + 1.5, campPos.z - 4)
+        rootNode.addChildNode(look)
+        let constraint = SCNLookAtConstraint(target: look)
+        constraint.isGimbalLockEnabled = true
+        cam.constraints = [constraint]
+        rootNode.addChildNode(cam)
+        sleepCameraNode = cam
+        cameraArmNode.isHidden = true
+
+        // Start near dusk if daytime, otherwise keep current evening/night.
+        if dayNight.timeOfDay > 0.28 && dayNight.timeOfDay < 0.68 {
+            dayNight.setTimeOfDay(0.70)
+        }
+
+        let totalAdvance = dayNight.fractionUntilMorning()
+        let duration: TimeInterval = 5.2
+        let steps = 48
+        let stepDt = duration / Double(steps)
+        let advancePerStep = totalAdvance / Float(steps)
+        // Simulate ~one night of irrigation work during the skip.
+        let irrigateSeconds = 90 + totalAdvance * dayNight.dayLengthSeconds * 0.15
+
+        for c in camps {
+            c.simulateIrrigation(seconds: irrigateSeconds, hasCampNPCs: true)
+            onOasisGrown?(c.site.id, c.oasisStage, c.oasisProgress, false)
+            onCampDrained?(c.fillLevel, c.site.id)
+        }
+
+        var step = 0
+        Timer.scheduledTimer(withTimeInterval: stepDt, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            step += 1
+            self.dayNight.advance(by: advancePerStep)
+            // Gentle camera drift during timelapse
+            if let sleepCam = self.sleepCameraNode {
+                sleepCam.position.x -= 0.04
+                sleepCam.position.y += 0.01
+            }
+            if step >= steps {
+                timer.invalidate()
+                self.finishSleep(lookNode: look, completion: completion)
+            }
+        }
+    }
+
+    private func finishSleep(lookNode: SCNNode, completion: (() -> Void)?) {
+        dayNight.setTimeOfDay(dayNight.nextMorning)
+        sleepCameraNode?.removeFromParentNode()
+        sleepCameraNode = nil
+        lookNode.removeFromParentNode()
+        cameraArmNode.isHidden = false
+        cameraWorldPosition = nil
+        isSleeping = false
+        onTimeOfDayChanged?(dayNight.timeOfDay)
+        onSleepFinished?()
+        completion?()
+    }
+
+    // MARK: - Streaming / discovery
+
+    private func updateStreaming() {
+        guard let playerNode, let generator = buildGenerator, voxelWorld != nil else { return }
+        let px = playerNode.position.x
+        let pz = playerNode.position.z
+
+        let needed = voxelWorld.chunkCoordinatesAround(
+            worldX: px, worldZ: pz, radiusChunks: streamLoadRadius
+        )
+        for coord in needed where !voxelWorld.hasChunk(cx: coord.cx, cz: coord.cz) {
+            if !streamPending.contains(where: { $0.cx == coord.cx && $0.cz == coord.cz }) {
+                streamPending.append(coord)
+            }
+        }
+
+        // Generate a few chunks per frame.
+        var generated = 0
+        while generated < streamChunksPerFrame, !streamPending.isEmpty {
+            let coord = streamPending.removeFirst()
+            if voxelWorld.hasChunk(cx: coord.cx, cz: coord.cz) { continue }
+            generator.generateChunk(into: voxelWorld, cx: coord.cx, cz: coord.cz)
+            voxelWorld.remeshChunk(cx: coord.cx, cz: coord.cz, animated: true)
+            generated += 1
+        }
+
+        // Unload far chunks.
+        let (bx, _, bz) = voxelWorld.blockCoord(worldX: px, worldY: 0, worldZ: pz)
+        let (pcx, pcz) = voxelWorld.chunkCoord(blockX: bx, blockZ: bz)
+        for chunk in voxelWorld.allChunks() {
+            let dx = chunk.cx - pcx
+            let dz = chunk.cz - pcz
+            if max(abs(dx), abs(dz)) > streamUnloadRadius {
+                voxelWorld.unloadChunk(cx: chunk.cx, cz: chunk.cz)
+            }
+        }
+    }
+
+    private func discoverNearbyCamps() {
+        guard let playerNode, let generator = buildGenerator else { return }
+        let px = playerNode.position.x
+        let pz = playerNode.position.z
+        for site in campSites where !spawnedCampIDs.contains(site.id) {
+            let dx = site.worldX - px
+            let dz = site.worldZ - pz
+            let dist = sqrt(dx * dx + dz * dz)
+            guard dist < 48 else { continue }
+
+            // Ensure pad chunks exist before placing props.
+            let coords = voxelWorld.chunkCoordinatesAround(
+                worldX: site.worldX, worldZ: site.worldZ, radiusChunks: 3
+            )
+            for c in coords where !voxelWorld.hasChunk(cx: c.cx, cz: c.cz) {
+                generator.generateChunk(into: voxelWorld, cx: c.cx, cz: c.cz)
+                voxelWorld.remeshChunk(cx: c.cx, cz: c.cz, animated: false)
+            }
+
+            let progress = slotCampProgress[site.id] ?? CampProgress(id: site.id)
+            let node = spawnCamp(site: site, progress: progress)
+            spawnNPCs(for: node)
+
+            // Local oasis for the new camp if missing.
+            let newOases = generator.placeAndCarveOases(
+                into: voxelWorld, nearSites: [site], oasisCount: 1
+            )
+            for oasis in newOases {
+                let key = oasisKey(oasis)
+                guard !placedOasisKeys.contains(key) else { continue }
+                placedOasisKeys.insert(key)
+                oases.append(oasis)
+                addWaterBody(for: oasis)
+                voxelWorld.remeshDirtyChunks()
+            }
+
+            onCampDiscovered?(site)
+        }
+    }
 
     // MARK: - Proximity
 
@@ -1047,6 +1320,20 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         if near != wasNearBarrel {
             wasNearBarrel = near
             onNearBarrel?(near)
+        }
+    }
+
+    private func checkBedProximity() {
+        guard let playerNode else { return }
+        let nearBed = camps.contains { $0.isNearBed(worldPosition: playerNode.position) }
+        if nearBed != wasNearBed {
+            wasNearBed = nearBed
+            onNearBed?(nearBed)
+        }
+        let nearSettings = camps.contains { $0.isNearSettingsTable(worldPosition: playerNode.position) }
+        if nearSettings != wasNearSettings {
+            wasNearSettings = nearSettings
+            onNearSettingsTable?(nearSettings)
         }
     }
 

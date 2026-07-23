@@ -11,6 +11,8 @@ struct CampSituation {
     var hasCompass: Bool
     var hasDetector: Bool
     var playerName: String?
+    var oasisStageName: String = "barren sand"
+    var oasisProgress: Float = 0
 
     var waterLabel: String {
         switch campWaterLevel {
@@ -27,6 +29,7 @@ struct CampSituation {
             "Camp barrel is \(waterLabel) (\(Int(campWaterLevel * 100))% full).",
             "Water deliveries so far: \(waterDeliveries).",
             "Oases the player has found: \(oasisFound).",
+            "Camp oasis growth: \(oasisStageName) (\(Int(oasisProgress * 100))% toward the next stage). NPCs slowly use barrel water to irrigate and grow the oasis.",
         ]
         if isCarryingWater {
             lines.append("The player is currently carrying a full water bucket.")

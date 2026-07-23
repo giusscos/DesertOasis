@@ -79,18 +79,27 @@ final class GameManager {
         hasWaterCompass: Bool? = nil,
         hasWaterDetector: Bool? = nil,
         posX: Float? = nil,
-        posZ: Float? = nil
+        posZ: Float? = nil,
+        timeOfDay: Float? = nil,
+        campProgress: CampProgress? = nil
     ) {
         if let w = waterFound       { saveSlots[slotIndex].waterFound       = w }
         if let o = oasisFound       { saveSlots[slotIndex].oasisFound       = o }
         if let t = tasksCompleted   { saveSlots[slotIndex].tasksCompleted   = t }
-        if let c = campWaterLevel   { saveSlots[slotIndex].campWaterLevel   = c }
+        if let c = campWaterLevel   {
+            saveSlots[slotIndex].campWaterLevel = c
+            var home = saveSlots[slotIndex].progress(forCampId: "home")
+            home.waterLevel = c
+            saveSlots[slotIndex].upsertCampProgress(home)
+        }
         if let d = waterDeliveries  { saveSlots[slotIndex].waterDeliveries  = d }
         if let carrying = isCarryingWater { saveSlots[slotIndex].isCarryingWater = carrying }
         if let compass = hasWaterCompass { saveSlots[slotIndex].hasWaterCompass = compass }
         if let detector = hasWaterDetector { saveSlots[slotIndex].hasWaterDetector = detector }
         if let x = posX             { saveSlots[slotIndex].playerPositionX  = x }
         if let z = posZ             { saveSlots[slotIndex].playerPositionZ  = z }
+        if let tod = timeOfDay      { saveSlots[slotIndex].timeOfDay        = tod }
+        if let cp = campProgress    { saveSlots[slotIndex].upsertCampProgress(cp) }
         saveSlots[slotIndex].lastUpdated = Date()
         persistSlots()
     }

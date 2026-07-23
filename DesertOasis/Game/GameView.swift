@@ -16,19 +16,25 @@ struct GameView: View {
     @State private var loadProgress: Float = 0
     @State private var isNearBarrel = false
     @State private var isNearWater = false
+    @State private var isNearBed = false
     @State private var carryingWater = false
     @State private var campWaterLevel: Float = 0
+    @State private var oasisStage: OasisGrowthStage = .barren
+    @State private var oasisProgress: Float = 0
     @State private var isRunningHeld = false
     @State private var lastWaterWarningLevel: Float = 1.0
+    @State private var isSleeping = false
+    @State private var timeOfDay: Float = 0.32
 
     private enum ActionKind {
-        case giveWater(NPCNode), deliver, collect
+        case giveWater(NPCNode), deliver, collect, sleep
 
         var icon: String {
             switch self {
             case .giveWater: "drop.fill"
             case .deliver:   "drop.fill"
             case .collect:   "drop"
+            case .sleep:     "moon.zzz.fill"
             }
         }
         var label: String {
@@ -36,6 +42,7 @@ struct GameView: View {
             case .giveWater: "Give"
             case .deliver:   "Deliver"
             case .collect:   "Collect"
+            case .sleep:     "Sleep"
             }
         }
         var tint: Color {
@@ -43,6 +50,7 @@ struct GameView: View {
             case .giveWater: Color(red: 0.15, green: 0.45, blue: 0.80)
             case .deliver:   Color(red: 0.15, green: 0.50, blue: 0.80)
             case .collect:   Color(red: 0.10, green: 0.55, blue: 0.35)
+            case .sleep:     Color(red: 0.28, green: 0.32, blue: 0.62)
             }
         }
     }
@@ -55,6 +63,7 @@ struct GameView: View {
         }
         if isNearBarrel { return .deliver }
         if isNearWater && !carryingWater { return .collect }
+        if isNearBed && !carryingWater { return .sleep }
         return nil
     }
 
@@ -63,15 +72,29 @@ struct GameView: View {
     var body: some View {
         ZStack {
             // 3D game scene
-            GameSceneView(scene: desertScene, onNPCTapped: handleNPCTap)
+            GameSceneView(
+                scene: desertScene,
+                onNPCTapped: handleNPCTap,
+                onBedTapped: handleBedTap,
+                onSettingsTableTapped: {
+                    guard !isSleeping else { return }
+                    showToast("Camp table — rest at the bed to skip the night.")
+                }
+            )
                 .ignoresSafeArea()
                 .gesture(cameraDragGesture)
-                .allowsHitTesting(!isLoadingWorld)
+                .allowsHitTesting(!isLoadingWorld && !isSleeping)
 
             if isLoadingWorld {
                 WorldLoadingOverlay(progress: loadProgress)
                     .transition(.opacity)
                     .zIndex(10)
+            }
+
+            if isSleeping {
+                SleepOverlay()
+                    .transition(.opacity)
+                    .zIndex(9)
             }
 
             // Dialogue panel
@@ -117,56 +140,19 @@ struct GameView: View {
                         .padding(.vertical, 12)
                         .background(Color(red: 0.15, green: 0.50, blue: 0.80).opacity(0.92), in: Capsule())
                         .shadow(radius: 8)
-                        .padding(.top, 8)
+                        .padding(.top, 58)
                     Spacer()
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .animation(.easeOut(duration: 0.5), value: toastMessage != nil)
             }
 
-            // HUD (hidden while chatting / loading)
-            if !isLoadingWorld, !dialogueManager.isVisible {
-                VStack {
-                    HStack(alignment: .top) {
-                        Button {
-                            gameManager.currentScreen = .slotSelection
-                        } label: {
-                            Image(systemName: "house.fill")
-                                .font(.title2)
-                                .foregroundStyle(.white)
-                                .padding(12)
-                                .background(.black.opacity(0.4), in: Circle())
-                        }
-
-                        Spacer()
-
-                        VStack(alignment: .trailing, spacing: 8) {
-                            campWaterBar
-
-                            HStack(spacing: 10) {
-                                if carryingWater {
-                                    Label("Full bucket", systemImage: "drop.fill")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(Color.blue.opacity(0.55), in: Capsule())
-                                }
-                                if slot.hasWaterCompass {
-                                    Image(systemName: "location.north.circle.fill")
-                                        .foregroundStyle(.yellow)
-                                }
-                                if slot.hasWaterDetector {
-                                    Image(systemName: "antenna.radiowaves.left.and.right")
-                                        .foregroundStyle(.orange)
-                                }
-                                statBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
-                                statBadge(icon: "checkmark.circle.fill", value: slot.waterDeliveries, color: .green)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+            // HUD (hidden while chatting / loading / sleeping)
+            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping {
+                VStack(spacing: 0) {
+                    topInfoBar
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
 
                     Spacer()
 
@@ -213,6 +199,10 @@ struct GameView: View {
             sceneBuilt = true
             carryingWater = slot.isCarryingWater
             campWaterLevel = slot.campWaterLevel
+            timeOfDay = slot.timeOfDay
+            let home = slot.progress(forCampId: "home")
+            oasisStage = OasisGrowthStage(rawValue: home.oasisStage) ?? .barren
+            oasisProgress = home.oasisProgress
             desertScene.onBuildProgress = { progress in
                 loadProgress = progress
             }
@@ -226,34 +216,119 @@ struct GameView: View {
         }
     }
 
-    private var campWaterBar: some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            Text("Camp water")
-                .font(.system(size: 11, weight: .semibold))
+    private var topInfoBar: some View {
+        HStack(spacing: 8) {
+            Button {
+                gameManager.currentScreen = .slotSelection
+            } label: {
+                Image(systemName: "house.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(.black.opacity(0.4), in: Circle())
+            }
+
+            compactMeter(
+                title: "Water",
+                fill: campWaterLevel,
+                tint: Color(red: 0.25, green: 0.60, blue: 0.90)
+            )
+
+            compactMeter(
+                title: oasisStage.displayName,
+                fill: oasisOverall,
+                tint: Color(red: 0.28, green: 0.62, blue: 0.38)
+            )
+
+            dayNightBadge
+
+            if carryingWater {
+                Label("Bucket", systemImage: "drop.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.55), in: Capsule())
+            }
+
+            if slot.hasWaterCompass {
+                Image(systemName: "location.north.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.yellow)
+            }
+            if slot.hasWaterDetector {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.orange)
+            }
+
+            Spacer(minLength: 4)
+
+            HStack(spacing: 6) {
+                statBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
+                statBadge(icon: "checkmark.circle.fill", value: slot.waterDeliveries, color: .green)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+    }
+
+    private func compactMeter(title: String, fill: Float, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(1)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.black.opacity(0.35))
                     Capsule()
-                        .fill(Color(red: 0.25, green: 0.60, blue: 0.90))
-                        .frame(width: max(4, geo.size.width * CGFloat(campWaterLevel)))
+                        .fill(tint)
+                        .frame(width: max(4, geo.size.width * CGFloat(min(1, max(0, fill)))))
                 }
             }
-            .frame(width: 120, height: 10)
+            .frame(width: 72, height: 7)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var oasisOverall: Float {
+        let stages = Float(OasisGrowthStage.lush.rawValue)
+        return (Float(oasisStage.rawValue) + (oasisStage == .lush ? 1 : oasisProgress)) / (stages + 1)
+    }
+
+    private var dayNightBadge: some View {
+        let icon = timeOfDay < 0.22 || timeOfDay > 0.78
+            ? "moon.stars.fill"
+            : (timeOfDay > 0.68 ? "sun.horizon.fill" : "sun.max.fill")
+        return Label(timeLabel, systemImage: icon)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.45), in: Capsule())
+    }
+
+    private var timeLabel: String {
+        switch timeOfDay {
+        case ..<0.22: "Night"
+        case ..<0.30: "Dawn"
+        case ..<0.68: "Day"
+        case ..<0.78: "Dusk"
+        default: "Night"
+        }
     }
 
     private func statBadge(icon: String, value: Int, color: Color) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             Image(systemName: icon).foregroundStyle(color)
             Text("\(value)").foregroundStyle(.white)
         }
-        .font(.system(size: 13, weight: .bold))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .font(.system(size: 12, weight: .bold))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .background(.black.opacity(0.45), in: Capsule())
     }
 
@@ -280,26 +355,38 @@ struct GameView: View {
             showToast("Bucket filled — bring it to camp!")
         }
 
-        desertScene.onWaterDelivered = { level, unlockedCompass, unlockedDetector in
+        desertScene.onWaterDelivered = { level, unlockedCompass, unlockedDetector, campId in
             carryingWater = false
-            campWaterLevel = level
             isNearBarrel = false
+            if campId == "home" || desertScene.camp?.site.id == campId {
+                campWaterLevel = level
+            }
 
             var deliveries = slot.waterDeliveries + 1
+            let stage = desertScene.camps.first { $0.site.id == campId }?.oasisStage ?? oasisStage
+            let prog = desertScene.camps.first { $0.site.id == campId }?.oasisProgress ?? oasisProgress
             gameManager.updateProgress(
                 slotIndex: slotIndex,
                 tasksCompleted: slot.tasksCompleted + 1,
-                campWaterLevel: level,
+                campWaterLevel: campId == "home" ? level : nil,
                 waterDeliveries: deliveries,
                 isCarryingWater: false,
                 hasWaterCompass: unlockedCompass ? true : nil,
-                hasWaterDetector: unlockedDetector ? true : nil
+                hasWaterDetector: unlockedDetector ? true : nil,
+                campProgress: CampProgress(
+                    id: campId,
+                    waterLevel: level,
+                    oasisStage: stage.rawValue,
+                    oasisProgress: prog
+                )
             )
 
             if unlockedCompass {
                 showToast("Water delivered! Compass unlocked.")
             } else if unlockedDetector {
                 showToast("Water delivered! Detector unlocked.")
+            } else if campId != "home" {
+                showToast("Water delivered to a new camp!")
             } else {
                 showToast("Water delivered to camp! (\(deliveries))")
             }
@@ -313,17 +400,54 @@ struct GameView: View {
             withAnimation { isNearWater = near }
         }
 
-        desertScene.onCampDrained = { level in
-            let prev = campWaterLevel
-            campWaterLevel = level
-            gameManager.updateProgress(slotIndex: slotIndex, campWaterLevel: level)
-            if level <= 0 && prev > 0 {
-                showToast("The camp barrel is empty!")
-                lastWaterWarningLevel = 0
-            } else if level < 0.2 && lastWaterWarningLevel >= 0.2 {
-                showToast("Camp water running low!")
-                lastWaterWarningLevel = level
+        desertScene.onNearBed = { near in
+            withAnimation { isNearBed = near }
+        }
+
+        desertScene.onNearSettingsTable = { near in
+            // Table is flavour + a quiet shortcut into settings when tapped (handled in scene tap).
+            _ = near
+        }
+
+        desertScene.onCampDrained = { level, campId in
+            if campId == "home" {
+                let prev = campWaterLevel
+                campWaterLevel = level
+                gameManager.updateProgress(slotIndex: slotIndex, campWaterLevel: level)
+                if level <= 0 && prev > 0 {
+                    showToast("The camp barrel is empty!")
+                    lastWaterWarningLevel = 0
+                } else if level < 0.2 && lastWaterWarningLevel >= 0.2 {
+                    showToast("Camp water running low!")
+                    lastWaterWarningLevel = level
+                }
+            } else {
+                persistCamp(campId)
             }
+        }
+
+        desertScene.onOasisGrown = { campId, stage, progress, advanced in
+            if campId == "home" {
+                oasisStage = stage
+                oasisProgress = progress
+            }
+            persistCamp(campId)
+            if advanced {
+                showToast("The oasis grows — \(stage.displayName)!")
+            }
+        }
+
+        desertScene.onCampDiscovered = { site in
+            showToast("A new camp! Help them grow an oasis.")
+            gameManager.updateProgress(
+                slotIndex: slotIndex,
+                campProgress: CampProgress(id: site.id)
+            )
+        }
+
+        desertScene.onTimeOfDayChanged = { t in
+            timeOfDay = t
+            gameManager.updateProgress(slotIndex: slotIndex, timeOfDay: t)
         }
 
         desertScene.onWaterGivenToNPC = { npc in
@@ -337,10 +461,43 @@ struct GameView: View {
             let name = npc.personality == .wanderer ? "the wanderer" : "the lost traveller"
             showToast("You shared your water with \(name).")
         }
+
+        desertScene.onSleepFinished = {
+            withAnimation { isSleeping = false }
+            showToast("A new day rises over the camp.")
+            persistAllCamps()
+        }
+    }
+
+    private func persistCamp(_ campId: String) {
+        guard let c = desertScene.camps.first(where: { $0.site.id == campId }) else { return }
+        gameManager.updateProgress(
+            slotIndex: slotIndex,
+            campWaterLevel: campId == "home" ? c.fillLevel : nil,
+            campProgress: CampProgress(
+                id: campId,
+                waterLevel: c.fillLevel,
+                oasisStage: c.oasisStage.rawValue,
+                oasisProgress: c.oasisProgress
+            )
+        )
+    }
+
+    private func persistAllCamps() {
+        for c in desertScene.camps {
+            persistCamp(c.site.id)
+        }
+        gameManager.updateProgress(slotIndex: slotIndex, timeOfDay: desertScene.dayNight.timeOfDay)
+        timeOfDay = desertScene.dayNight.timeOfDay
+        if let home = desertScene.camp {
+            oasisStage = home.oasisStage
+            oasisProgress = home.oasisProgress
+            campWaterLevel = home.fillLevel
+        }
     }
 
     private func handleNPCTap(_ npc: NPCNode) {
-        guard !isLoadingWorld, !dialogueManager.isVisible else { return }
+        guard !isLoadingWorld, !isSleeping, !dialogueManager.isVisible else { return }
         guard dialogueManager.activeNPC?.npcID != npc.npcID else { return }
         if let player = desertScene.playerNode {
             let dx = npc.position.x - player.position.x
@@ -356,9 +513,22 @@ struct GameView: View {
                 isCarryingWater: carryingWater,
                 hasCompass: slot.hasWaterCompass,
                 hasDetector: slot.hasWaterDetector,
-                playerName: slot.playerName
+                playerName: slot.playerName,
+                oasisStageName: oasisStage.displayName.lowercased(),
+                oasisProgress: oasisProgress
             )
         )
+    }
+
+    private func handleBedTap() {
+        guard !isLoadingWorld, !isSleeping, isNearBed else { return }
+        startSleep()
+    }
+
+    private func startSleep() {
+        guard !isSleeping else { return }
+        withAnimation { isSleeping = true }
+        desertScene.beginSleep()
     }
 
     @ViewBuilder
@@ -384,6 +554,7 @@ struct GameView: View {
         case .giveWater(let npc): desertScene.giveWaterToNPC(npc)
         case .deliver: _ = desertScene.tryDeliverWater()
         case .collect: _ = desertScene.tryCollectWater()
+        case .sleep: startSleep()
         }
     }
 
@@ -400,10 +571,9 @@ struct GameView: View {
     var cameraDragGesture: some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
-                guard !isLoadingWorld, !dialogueManager.isVisible else { return }
+                guard !isLoadingWorld, !isSleeping, !dialogueManager.isVisible else { return }
                 let dx = Float(value.translation.width - lastCameraTranslation.width) * 0.005
                 let dy = Float(value.translation.height - lastCameraTranslation.height) * 0.004
-                // Drag right → yaw; drag up → look up (pitch increases)
                 desertScene.rotateCamera(yawDelta: dx, pitchDelta: -dy)
                 lastCameraTranslation = value.translation
             }
@@ -426,6 +596,43 @@ struct GameView: View {
                                            posZ: p.map { $0.z })
             }
         }
+    }
+}
+
+// MARK: - Sleep overlay
+
+struct SleepOverlay: View {
+    @State private var pulse = false
+
+    var body: some View {
+        VStack {
+            Spacer()
+            Text("Night falls over the oasis…")
+                .font(.system(size: 22, weight: .bold, design: .serif))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.5), radius: 8)
+                .opacity(pulse ? 1 : 0.7)
+                .padding(.bottom, 56)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.05),
+                    Color(red: 0.12, green: 0.08, blue: 0.22).opacity(0.35),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+        )
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -542,6 +749,8 @@ struct WorldLoadingOverlay: View {
 struct GameSceneView: UIViewRepresentable {
     let scene: DesertScene
     var onNPCTapped: ((NPCNode) -> Void)?
+    var onBedTapped: (() -> Void)?
+    var onSettingsTableTapped: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(scene: scene)
@@ -565,14 +774,18 @@ struct GameSceneView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: SCNView, context: Context) {
-        uiView.pointOfView = scene.cameraNode
+        uiView.pointOfView = scene.activeCameraNode
         context.coordinator.scene = scene
         context.coordinator.onNPCTapped = onNPCTapped
+        context.coordinator.onBedTapped = onBedTapped
+        context.coordinator.onSettingsTableTapped = onSettingsTableTapped
     }
 
     final class Coordinator: NSObject, SCNSceneRendererDelegate {
         var scene: DesertScene
         var onNPCTapped: ((NPCNode) -> Void)?
+        var onBedTapped: (() -> Void)?
+        var onSettingsTableTapped: (() -> Void)?
         private var lastTime: TimeInterval?
 
         init(scene: DesertScene) {
@@ -588,11 +801,15 @@ struct GameSceneView: UIViewRepresentable {
             }
             lastTime = time
             scene.update(deltaTime: dt)
+            if let view = renderer as? SCNView {
+                view.pointOfView = scene.activeCameraNode
+            }
         }
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended,
-                  let scnView = gesture.view as? SCNView else { return }
+                  let scnView = gesture.view as? SCNView,
+                  !scene.isSleeping else { return }
             let point = gesture.location(in: scnView)
             let hits = scnView.hitTest(point, options: nil)
             for hit in hits {
@@ -600,6 +817,14 @@ struct GameSceneView: UIViewRepresentable {
                 while let n = node {
                     if let npc = n as? NPCNode {
                         DispatchQueue.main.async { self.onNPCTapped?(npc) }
+                        return
+                    }
+                    if n.name == "sleep_bed" || n.name == "lobby_bed" {
+                        DispatchQueue.main.async { self.onBedTapped?() }
+                        return
+                    }
+                    if n.name == "camp_settings_table" || n.name == "settings_zone" {
+                        DispatchQueue.main.async { self.onSettingsTableTapped?() }
                         return
                     }
                     node = n.parent
