@@ -14,6 +14,8 @@ final class OasisWaterNode: SCNNode {
     private let surfaceNode = SCNNode()
     private let surfaceMaterial = SCNMaterial()
     private var splashTemplate: SCNParticleSystem!
+    private var depthDisc: SCNNode!
+    private var isDepleted = false
 
     private var time: Float = 0
     private var footstepTimer: Float = 0
@@ -47,6 +49,18 @@ final class OasisWaterNode: SCNNode {
         return local.x * local.x + local.z * local.z <= radius * radius
     }
 
+    func setDepleted(_ depleted: Bool) {
+        isDepleted = depleted
+        surfaceNode.isHidden = depleted
+        depthDisc.geometry?.firstMaterial?.diffuse.contents = depleted
+            ? UIColor(red: 0.55, green: 0.45, blue: 0.30, alpha: 1)
+            : UIColor(red: 0.04, green: 0.18, blue: 0.28, alpha: 1)
+        if !depleted {
+            heights = [Float](repeating: 0, count: gridSize * gridSize)
+            velocities = [Float](repeating: 0, count: gridSize * gridSize)
+        }
+    }
+
     /// Per-frame sim. Pass the player world position and horizontal speed (m/s).
     /// Returns `true` the frame the player first steps into the water.
     @discardableResult
@@ -77,9 +91,11 @@ final class OasisWaterNode: SCNNode {
         }
         wasPlayerInside = inside
 
-        addAmbientWaves(dt)
-        simulate(dt)
-        rebuildMesh()
+        if !isDepleted {
+            addAmbientWaves(dt)
+            simulate(dt)
+            rebuildMesh()
+        }
         return justEntered
     }
 
@@ -93,6 +109,7 @@ final class OasisWaterNode: SCNNode {
         geo.firstMaterial = mat
         let depth = SCNNode(geometry: geo)
         depth.position = SCNVector3(0, -0.04, 0)
+        depthDisc = depth
         addChildNode(depth)
     }
 

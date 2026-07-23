@@ -63,6 +63,12 @@ final class CampNode: SCNNode {
         return fillLevel
     }
 
+    @discardableResult
+    func drainWater(amount: Float = 0.008) -> Float {
+        setFillLevel(max(0, fillLevel - amount))
+        return fillLevel
+    }
+
     func isInsideTent(worldX: Float, worldZ: Float) -> Bool {
         tentFootprints.contains { $0.contains(x: worldX, z: worldZ) }
     }

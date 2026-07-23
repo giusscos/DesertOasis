@@ -9,23 +9,61 @@ struct GameView: View {
     @State private var dialogueManager = DialogueManager()
     @State private var joystickOffset: CGSize = .zero
     @State private var lastCameraTranslation: CGSize = .zero
-    @State private var nearbyNPCPrompt: NPCNode? = nil
     @State private var toastMessage: String? = nil
     @State private var oasisFoundSet: Set<String> = []
     @State private var sceneBuilt = false
     @State private var isLoadingWorld = true
     @State private var loadProgress: Float = 0
-    @State private var showDeliverPrompt = false
+    @State private var isNearBarrel = false
+    @State private var isNearWater = false
     @State private var carryingWater = false
     @State private var campWaterLevel: Float = 0
     @State private var isRunningHeld = false
+    @State private var lastWaterWarningLevel: Float = 1.0
+
+    private enum ActionKind {
+        case giveWater(NPCNode), deliver, collect
+
+        var icon: String {
+            switch self {
+            case .giveWater: "drop.fill"
+            case .deliver:   "drop.fill"
+            case .collect:   "drop"
+            }
+        }
+        var label: String {
+            switch self {
+            case .giveWater: "Give"
+            case .deliver:   "Deliver"
+            case .collect:   "Collect"
+            }
+        }
+        var tint: Color {
+            switch self {
+            case .giveWater: Color(red: 0.15, green: 0.45, blue: 0.80)
+            case .deliver:   Color(red: 0.15, green: 0.50, blue: 0.80)
+            case .collect:   Color(red: 0.10, green: 0.55, blue: 0.35)
+            }
+        }
+    }
+
+    private var currentAction: ActionKind? {
+        if dialogueManager.isVisible, carryingWater,
+           let npc = dialogueManager.activeNPC,
+           npc.personality.canReceiveWater, !npc.task.isCompleted {
+            return .giveWater(npc)
+        }
+        if isNearBarrel { return .deliver }
+        if isNearWater && !carryingWater { return .collect }
+        return nil
+    }
 
     var slot: SaveSlot { gameManager.saveSlots[slotIndex] }
 
     var body: some View {
         ZStack {
             // 3D game scene
-            GameSceneView(scene: desertScene)
+            GameSceneView(scene: desertScene, onNPCTapped: handleNPCTap)
                 .ignoresSafeArea()
                 .gesture(cameraDragGesture)
                 .allowsHitTesting(!isLoadingWorld)
@@ -48,63 +86,24 @@ struct GameView: View {
                 .animation(.spring(duration: 0.4), value: dialogueManager.isVisible)
             }
 
-            // NPC tap-to-talk prompt
-            if !isLoadingWorld, let npc = nearbyNPCPrompt, !dialogueManager.isVisible {
+            // Give water button — floats above dialogue panel
+            if !isLoadingWorld,
+               dialogueManager.isVisible,
+               carryingWater,
+               let npc = dialogueManager.activeNPC,
+               npc.personality.canReceiveWater,
+               !npc.task.isCompleted {
                 VStack {
                     Spacer()
-                    Button {
-                        dialogueManager.startConversation(
-                            with: npc,
-                            situation: CampSituation(
-                                campWaterLevel: campWaterLevel,
-                                waterDeliveries: slot.waterDeliveries,
-                                oasisFound: slot.oasisFound,
-                                isCarryingWater: carryingWater,
-                                hasCompass: slot.hasWaterCompass,
-                                hasDetector: slot.hasWaterDetector,
-                                playerName: slot.playerName
-                            )
-                        )
-                        nearbyNPCPrompt = nil
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "bubble.left.and.bubble.right")
-                            Text("Talk")
-                                .font(.system(size: 16, weight: .bold, design: .serif))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color(red: 0.7, green: 0.45, blue: 0.1), in: Capsule())
-                        .shadow(radius: 6)
+                    HStack {
+                        Spacer()
+                        contextActionButton(for: .giveWater(npc))
+                            .padding(.trailing, 28)
+                            .padding(.bottom, 310)
                     }
-                    .padding(.bottom, 140)
                 }
                 .transition(.scale.combined(with: .opacity))
-                .animation(.spring(duration: 0.3), value: nearbyNPCPrompt != nil)
-            }
-
-            // Deliver water prompt
-            if !isLoadingWorld, showDeliverPrompt, !dialogueManager.isVisible, nearbyNPCPrompt == nil {
-                VStack {
-                    Spacer()
-                    Button {
-                        _ = desertScene.tryDeliverWater()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "drop.fill")
-                            Text("Deliver water")
-                                .font(.system(size: 16, weight: .bold, design: .serif))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color(red: 0.15, green: 0.50, blue: 0.80), in: Capsule())
-                        .shadow(radius: 6)
-                    }
-                    .padding(.bottom, 140)
-                }
-                .transition(.scale.combined(with: .opacity))
+                .animation(.spring(duration: 0.3), value: carryingWater)
             }
 
             // Toast
@@ -182,6 +181,11 @@ struct GameView: View {
                         Spacer()
 
                         VStack(spacing: 14) {
+                            if let action = currentAction {
+                                contextActionButton(for: action)
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+
                             HoldActionButton(
                                 systemName: "figure.run",
                                 isActive: isRunningHeld,
@@ -195,6 +199,7 @@ struct GameView: View {
                                 desertScene.jump()
                             }
                         }
+                        .animation(.spring(duration: 0.3), value: currentAction != nil)
                         .padding(.trailing, 28)
                         .padding(.bottom, 28)
                     }
@@ -255,18 +260,6 @@ struct GameView: View {
     // MARK: - Scene callbacks
 
     private func wireCallbacks() {
-        desertScene.onNPCProximity = { npc in
-            guard nearbyNPCPrompt?.npcID != npc.npcID,
-                  dialogueManager.activeNPC?.npcID != npc.npcID else { return }
-            withAnimation { nearbyNPCPrompt = npc }
-            Task {
-                try? await Task.sleep(for: .seconds(4))
-                await MainActor.run {
-                    withAnimation { nearbyNPCPrompt = nil }
-                }
-            }
-        }
-
         desertScene.onOasisReached = { oasis in
             let key = "\(oasis.position.x)-\(oasis.position.z)"
             guard !oasisFoundSet.contains(key) else { return }
@@ -290,7 +283,7 @@ struct GameView: View {
         desertScene.onWaterDelivered = { level, unlockedCompass, unlockedDetector in
             carryingWater = false
             campWaterLevel = level
-            showDeliverPrompt = false
+            isNearBarrel = false
 
             var deliveries = slot.waterDeliveries + 1
             gameManager.updateProgress(
@@ -312,8 +305,85 @@ struct GameView: View {
             }
         }
 
-        desertScene.onNearBarrel = { canDeliver in
-            withAnimation { showDeliverPrompt = canDeliver }
+        desertScene.onNearBarrel = { near in
+            withAnimation { isNearBarrel = near }
+        }
+
+        desertScene.onNearWater = { near in
+            withAnimation { isNearWater = near }
+        }
+
+        desertScene.onCampDrained = { level in
+            let prev = campWaterLevel
+            campWaterLevel = level
+            gameManager.updateProgress(slotIndex: slotIndex, campWaterLevel: level)
+            if level <= 0 && prev > 0 {
+                showToast("The camp barrel is empty!")
+                lastWaterWarningLevel = 0
+            } else if level < 0.2 && lastWaterWarningLevel >= 0.2 {
+                showToast("Camp water running low!")
+                lastWaterWarningLevel = level
+            }
+        }
+
+        desertScene.onWaterGivenToNPC = { npc in
+            carryingWater = false
+            dialogueManager.endConversation()
+            gameManager.updateProgress(
+                slotIndex: slotIndex,
+                tasksCompleted: slot.tasksCompleted + 1,
+                isCarryingWater: false
+            )
+            let name = npc.personality == .wanderer ? "the wanderer" : "the lost traveller"
+            showToast("You shared your water with \(name).")
+        }
+    }
+
+    private func handleNPCTap(_ npc: NPCNode) {
+        guard !isLoadingWorld, !dialogueManager.isVisible else { return }
+        guard dialogueManager.activeNPC?.npcID != npc.npcID else { return }
+        if let player = desertScene.playerNode {
+            let dx = npc.position.x - player.position.x
+            let dz = npc.position.z - player.position.z
+            guard dx * dx + dz * dz < 10 * 10 else { return }
+        }
+        dialogueManager.startConversation(
+            with: npc,
+            situation: CampSituation(
+                campWaterLevel: campWaterLevel,
+                waterDeliveries: slot.waterDeliveries,
+                oasisFound: slot.oasisFound,
+                isCarryingWater: carryingWater,
+                hasCompass: slot.hasWaterCompass,
+                hasDetector: slot.hasWaterDetector,
+                playerName: slot.playerName
+            )
+        )
+    }
+
+    @ViewBuilder
+    private func contextActionButton(for action: ActionKind) -> some View {
+        Button { performAction(action) } label: {
+            VStack(spacing: 3) {
+                Image(systemName: action.icon)
+                    .font(.system(size: 22, weight: .bold))
+                Text(action.label)
+                    .font(.system(size: 11, weight: .bold, design: .serif))
+            }
+            .foregroundStyle(.white)
+            .frame(width: 64, height: 64)
+            .background(action.tint.opacity(0.82), in: Circle())
+            .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1.5))
+            .shadow(radius: 4)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func performAction(_ action: ActionKind) {
+        switch action {
+        case .giveWater(let npc): desertScene.giveWaterToNPC(npc)
+        case .deliver: _ = desertScene.tryDeliverWater()
+        case .collect: _ = desertScene.tryCollectWater()
         }
     }
 
@@ -471,6 +541,7 @@ struct WorldLoadingOverlay: View {
 
 struct GameSceneView: UIViewRepresentable {
     let scene: DesertScene
+    var onNPCTapped: ((NPCNode) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(scene: scene)
@@ -485,16 +556,23 @@ struct GameSceneView: UIViewRepresentable {
         v.isPlaying = true
         v.preferredFramesPerSecond = 60
         v.backgroundColor = UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
+
+        let tap = UITapGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handleTap(_:)))
+        tap.cancelsTouchesInView = false
+        v.addGestureRecognizer(tap)
         return v
     }
 
     func updateUIView(_ uiView: SCNView, context: Context) {
         uiView.pointOfView = scene.cameraNode
         context.coordinator.scene = scene
+        context.coordinator.onNPCTapped = onNPCTapped
     }
 
     final class Coordinator: NSObject, SCNSceneRendererDelegate {
         var scene: DesertScene
+        var onNPCTapped: ((NPCNode) -> Void)?
         private var lastTime: TimeInterval?
 
         init(scene: DesertScene) {
@@ -510,6 +588,23 @@ struct GameSceneView: UIViewRepresentable {
             }
             lastTime = time
             scene.update(deltaTime: dt)
+        }
+
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended,
+                  let scnView = gesture.view as? SCNView else { return }
+            let point = gesture.location(in: scnView)
+            let hits = scnView.hitTest(point, options: nil)
+            for hit in hits {
+                var node: SCNNode? = hit.node
+                while let n = node {
+                    if let npc = n as? NPCNode {
+                        DispatchQueue.main.async { self.onNPCTapped?(npc) }
+                        return
+                    }
+                    node = n.parent
+                }
+            }
         }
     }
 }

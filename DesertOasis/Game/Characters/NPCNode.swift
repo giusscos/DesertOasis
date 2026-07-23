@@ -279,6 +279,10 @@ enum NPCPersonality: CaseIterable {
         }
     }
 
+    var canReceiveWater: Bool {
+        self == .wanderer || self == .lost
+    }
+
     var task: NPCTask {
         switch self {
         case .wanderer: NPCTask(description: "Bring water to the wanderer")
@@ -496,6 +500,18 @@ final class NPCNode: SCNNode {
 
     func playGestureAnimation() {
         VoxelAnim.playGesture(on: characterNode)
+    }
+
+    func completeTask() {
+        task.isCompleted = true
+        hideIndicator()
+        targetX = nil; targetZ = nil
+        VoxelAnim.playIdle(on: characterNode)
+        runAction(.sequence([
+            .wait(duration: 1.8),
+            .fadeOut(duration: 0.9),
+            .removeFromParentNode()
+        ]))
     }
 
     func hideIndicator() { indicatorNode?.isHidden = true }

@@ -313,7 +313,7 @@ enum VoxelPropBuilder {
         let s = VoxelSculpture(sizeX: 28, sizeY: 22, sizeZ: 28,
                                origin: SIMD3<Float>(-14, 0, -14) * uf)
 
-        // Multi-layer stone ring (base flush with ground, stacked up)
+        // Multi-layer stone ring
         for layer in 0..<3 {
             let cy = Float(layer) * 1.6 + 1.0
             let ringR: Float = 9.5 - Float(layer) * 0.6
@@ -349,23 +349,40 @@ enum VoxelPropBuilder {
             s.fillSphere(cx: 9 + t * 8, cy: 7.2, cz: 16 - t * 6, r: 1.0, type: .wood)
         }
 
-        // Layered flame / ember stack
-        s.fillSphere(cx: 14, cy: 5.5, cz: 14, r: 3.2, type: .brass)
-        s.fillSphere(cx: 14, cy: 8.5, cz: 14, r: 2.4, type: .brass)
-        s.fillSphere(cx: 14, cy: 11.0, cz: 14, r: 1.7, type: .brass)
-        s.fillSphere(cx: 13.2, cy: 13.5, cz: 14.4, r: 1.1, type: .brass)
-        s.fillSphere(cx: 14.6, cy: 15.5, cz: 13.6, r: 0.8, type: .brass)
-
-        let mesh = s.makeNode(name: "campfire_mesh") { type in
-            if type == .brass {
-                return UIColor(red: 1.0, green: 0.35, blue: 0.05, alpha: 1)
-            }
-            return type.color
-        }
-        mesh.geometry?.firstMaterial?.emission.contents = UIColor(red: 1.0, green: 0.4, blue: 0.08, alpha: 1)
-        mesh.geometry?.firstMaterial?.emission.intensity = 0.9
+        let mesh = s.makeNode(name: "campfire_mesh")
+        // Subtle ember glow on the logs and stones
+        mesh.geometry?.firstMaterial?.emission.contents = UIColor(red: 0.5, green: 0.15, blue: 0.0, alpha: 1)
+        mesh.geometry?.firstMaterial?.emission.intensity = 0.2
         fire.addChildNode(mesh)
 
+        // Flame voxels in a separate node so they can be animated independently
+        let fs = VoxelSculpture(sizeX: 28, sizeY: 22, sizeZ: 28,
+                                origin: SIMD3<Float>(-14, 0, -14) * uf)
+        fs.fillSphere(cx: 14,   cy: 5.5,  cz: 14,   r: 3.2, type: .brass)
+        fs.fillSphere(cx: 14,   cy: 8.5,  cz: 14,   r: 2.4, type: .brass)
+        fs.fillSphere(cx: 14,   cy: 11.0, cz: 14,   r: 1.7, type: .brass)
+        fs.fillSphere(cx: 13.2, cy: 13.5, cz: 14.4, r: 1.1, type: .brass)
+        fs.fillSphere(cx: 14.6, cy: 15.5, cz: 13.6, r: 0.8, type: .brass)
+
+        let flameMesh = fs.makeNode(name: "flame_mesh") { _ in
+            UIColor(red: 1.0, green: 0.35, blue: 0.05, alpha: 1)
+        }
+        flameMesh.geometry?.firstMaterial?.emission.contents = UIColor(red: 1.0, green: 0.4, blue: 0.08, alpha: 1)
+        flameMesh.geometry?.firstMaterial?.emission.intensity = 0.9
+        flameMesh.geometry?.firstMaterial?.lightingModel = .constant
+        fire.addChildNode(flameMesh)
+
+        // Breathing Y scale + inverse XZ + slow drift — layered sin waves feel organic
+        let flameAnim = SCNAction.customAction(duration: 60) { node, elapsed in
+            let t = Float(elapsed)
+            let breatheY  = 1.0 + 0.12 * sin(t * 2.1) + 0.06 * sin(t * 3.9 + 1.1)
+            let breatheXZ = 1.0 - 0.06 * sin(t * 2.1) - 0.03 * sin(t * 3.9 + 1.1)
+            node.scale = SCNVector3(breatheXZ, breatheY, breatheXZ)
+            node.eulerAngles.y = 0.09 * sin(t * 1.3) + 0.04 * cos(t * 2.8 + 0.7)
+        }
+        flameMesh.runAction(.repeatForever(flameAnim))
+
+        // Main omni light with intensity flicker
         let light = SCNLight()
         light.type = .omni
         light.color = UIColor(red: 1.0, green: 0.55, blue: 0.22, alpha: 1)
@@ -378,6 +395,14 @@ enum VoxelPropBuilder {
         lightNode.position.y = 0.85
         fire.addChildNode(lightNode)
 
+        let flickerAnim = SCNAction.customAction(duration: 60) { node, elapsed in
+            let t = Float(elapsed)
+            let f = 1.0 + 0.28 * sin(t * 7.3 + 0.4) * sin(t * 13.1 + 1.2) * cos(t * 4.7 + 2.1)
+            node.light?.intensity = 900 * CGFloat(f)
+        }
+        lightNode.runAction(.repeatForever(flickerAnim))
+
+        // Bounce fill light with its own flicker offset
         let bounce = SCNLight()
         bounce.type = .omni
         bounce.color = UIColor(red: 1.0, green: 0.45, blue: 0.15, alpha: 1)
@@ -388,6 +413,47 @@ enum VoxelPropBuilder {
         bounceNode.light = bounce
         bounceNode.position = SCNVector3(0, 0.35, 0)
         fire.addChildNode(bounceNode)
+
+        let bounceFlicker = SCNAction.customAction(duration: 60) { node, elapsed in
+            let t = Float(elapsed)
+            let f = 1.0 + 0.35 * sin(t * 9.1 + 1.8) * cos(t * 5.3 + 0.6)
+            node.light?.intensity = 220 * CGFloat(f)
+        }
+        bounceNode.runAction(.repeatForever(bounceFlicker))
+
+        // Rising spark particles
+        let sparks = SCNParticleSystem()
+        sparks.birthRate = 10
+        sparks.birthRateVariation = 6
+        sparks.particleLifeSpan = 1.8
+        sparks.particleLifeSpanVariation = 0.7
+        sparks.particleVelocity = 1.3
+        sparks.particleVelocityVariation = 0.5
+        sparks.spreadingAngle = 22
+        sparks.particleSize = 0.05
+        sparks.particleSizeVariation = 0.025
+        sparks.particleColor = UIColor(red: 1.0, green: 0.6, blue: 0.12, alpha: 1.0)
+        sparks.particleColorVariation = SCNVector4(0.1, 0.2, 0.05, 0.1)
+        sparks.isAffectedByGravity = false
+        sparks.emitterShape = SCNSphere(radius: 0.12)
+        sparks.birthDirection = .constant
+        sparks.emittingDirection = SCNVector3(0, 1, 0)
+
+        // Fade from bright orange → dim red → transparent over particle lifetime
+        let colorAnim = CAKeyframeAnimation(keyPath: "color")
+        colorAnim.values = [
+            UIColor(red: 1.0, green: 0.7,  blue: 0.2,  alpha: 1.0),
+            UIColor(red: 1.0, green: 0.35, blue: 0.05, alpha: 0.7),
+            UIColor(red: 0.4, green: 0.08, blue: 0.0,  alpha: 0.0)
+        ]
+        colorAnim.keyTimes = [0.0, 0.5, 1.0]
+        colorAnim.duration = 1.0
+        sparks.propertyControllers = [.color: SCNParticlePropertyController(animation: colorAnim)]
+
+        let sparkNode = SCNNode()
+        sparkNode.position = SCNVector3(0, 0.45, 0)
+        sparkNode.addParticleSystem(sparks)
+        fire.addChildNode(sparkNode)
 
         return fire
     }

@@ -178,7 +178,7 @@ struct VoxelWorldGenerator {
                         return sqrt(dx * dx + dz * dz) < minOasisSepBlocks
                     }
                     if !tooClose {
-                        let radius = 6 + rng.nextFloat() * 8 // meters
+                        let radius = 2.0 + rng.nextFloat() * 1.8 // meters (2–3.8 m — small desert water hole)
                         oases.append(OasisInfo(
                             position: SCNVector3(
                                 (Float(bx) + 0.5) * bs,

@@ -26,12 +26,26 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     var onWaterCollected: (() -> Void)?
     var onWaterDelivered: ((Float, Bool, Bool) -> Void)?
     var onNearBarrel: ((Bool) -> Void)?
+    var onCampDrained: ((Float) -> Void)?
+    var onWaterGivenToNPC: ((NPCNode) -> Void)?
+    var onNearWater: ((Bool) -> Void)?
 
     private var playerHorizontalSpeed: Float = 0
     private var isInWater = false
     private var toolTime: Float = 0
     private var wasNearBarrel = false
     private var deliveryCount = 0
+
+    // Oasis depletion
+    private var wasNearCollectableWater = false
+    private var depletedWaterBodies: Set<ObjectIdentifier> = []
+    private var oasisRefillTimers: [ObjectIdentifier: Float] = [:]
+    private let oasisRefillTime: Float = 90.0
+
+    // Camp drain
+    private var campDrainAccumulator: Float = 0
+    private let campDrainInterval: Float = 18.0
+    private let campDrainAmount: Float = 0.007
 
     // Progressive world build
     private(set) var isBuildingWorld = false
@@ -120,7 +134,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         for oasis in oases {
             let container = SCNNode()
             container.position = SCNVector3(oasis.position.x, oasis.position.y, oasis.position.z)
-            let water = OasisWaterNode(radius: oasis.radius)
+            let water = OasisWaterNode(radius: oasis.radius, resolution: 18)
             container.addChildNode(water)
             rootNode.addChildNode(container)
             waterBodies.append(water)
@@ -414,6 +428,12 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         guard !isBuildingWorld, playerNode != nil else { return }
         let dt = max(0, min(deltaTime, 1.0 / 20.0))
         toolTime += dt
+        campDrainAccumulator += dt
+        if campDrainAccumulator >= campDrainInterval, let camp {
+            campDrainAccumulator -= campDrainInterval
+            let level = camp.drainWater(amount: campDrainAmount)
+            onCampDrained?(level)
+        }
         syncCameraFollow()
         applyMovement(deltaTime: dt)
         updateNPCs(deltaTime: dt)
@@ -535,20 +555,35 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private func updateWater(deltaTime: Float) {
         guard let playerNode else { return }
         var inside = false
+        var canCollect = false
         for water in waterBodies {
-            let entered = water.update(
+            let id = ObjectIdentifier(water)
+            if var timer = oasisRefillTimers[id] {
+                timer -= deltaTime
+                if timer <= 0 {
+                    oasisRefillTimers.removeValue(forKey: id)
+                    depletedWaterBodies.remove(id)
+                    water.setDepleted(false)
+                } else {
+                    oasisRefillTimers[id] = timer
+                }
+            }
+            let isDepleted = depletedWaterBodies.contains(id)
+            water.update(
                 deltaTime: deltaTime,
                 playerWorldPosition: playerNode.position,
                 playerSpeed: playerHorizontalSpeed
             )
             if water.contains(worldPosition: playerNode.position) {
                 inside = true
-            }
-            if entered {
-                tryCollectWater()
+                if !isDepleted && !(toolRig?.isCarryingWater == true) { canCollect = true }
             }
         }
         isInWater = inside
+        if canCollect != wasNearCollectableWater {
+            wasNearCollectableWater = canCollect
+            onNearWater?(canCollect)
+        }
     }
 
     private func updateTools() {
@@ -619,15 +654,29 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     // MARK: - Water carry / deliver
 
     @discardableResult
-    func tryCollectWater() -> Bool {
-        guard let toolRig, !toolRig.isCarryingWater else { return false }
-        guard isInWater || waterBodies.contains(where: {
-            $0.contains(worldPosition: playerNode.position)
-        }) else { return false }
+    func tryCollectWater(enteredBody: OasisWaterNode? = nil) -> Bool {
+        guard let toolRig, !toolRig.isCarryingWater, let playerNode else { return false }
+        let body = enteredBody ?? waterBodies.first {
+            $0.contains(worldPosition: playerNode.position) &&
+            !depletedWaterBodies.contains(ObjectIdentifier($0))
+        }
+        guard let body, !depletedWaterBodies.contains(ObjectIdentifier(body)) else { return false }
 
         toolRig.setCarryingWater(true)
+        let id = ObjectIdentifier(body)
+        depletedWaterBodies.insert(id)
+        oasisRefillTimers[id] = oasisRefillTime
+        body.setDepleted(true)
         onWaterCollected?()
         return true
+    }
+
+    func giveWaterToNPC(_ npc: NPCNode) {
+        guard let toolRig, toolRig.isCarryingWater else { return }
+        toolRig.setCarryingWater(false)
+        npcs.removeAll { $0.npcID == npc.npcID }
+        npc.completeTask()
+        onWaterGivenToNPC?(npc)
     }
 
     @discardableResult
