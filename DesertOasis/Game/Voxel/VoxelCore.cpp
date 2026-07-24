@@ -32,7 +32,7 @@ static float value_noise(float x, float y, uint64_t seed) {
     return (v00*(1.f-ux) + v10*ux) * (1.f-uy) + (v01*(1.f-ux) + v11*ux) * uy;
 }
 
-static float fbm(float x, float y, uint64_t seed, int octaves = 5) {
+static float fbm(float x, float y, uint64_t seed, int octaves = 3) {
     float val = 0.f, amp = 0.5f, freq = 1.f;
     for (int o = 0; o < octaves; ++o) {
         val  += value_noise(x*freq, y*freq, seed + (uint64_t)(o * 7919)) * amp;
@@ -79,7 +79,7 @@ void voxel_gen_chunk(uint8_t*       out_blocks,
 
     int sand_d = std::max(1, (int)roundf(2.f / block_size));
     int ss_d   = std::max(1, (int)roundf(3.f / block_size));
-    float blend = (float)std::max(4, (int)roundf(6.f / block_size));
+    float blend = (float)std::max(4, (int)roundf(14.f / block_size));
 
     memset(out_blocks, 0, (size_t)(SX * SY * SZ));
 
@@ -215,7 +215,9 @@ int32_t voxel_mesh_build(const uint8_t* padded,
                 // Padded index for this block (inner cell)
                 int pi   = (lx+1) + PX * ((lz+1) + PZ * ly);
                 uint8_t  type = padded[pi];
-                if (type == 0) continue; // air
+                // Skip air and water — oasis water is drawn by OasisWaterNode.
+                // Meshing translucent water into opaque sand chunks punches square holes.
+                if (type == 0 || type == 4) continue;
 
                 RGBA col = (type < 15) ? BLOCK_COLOR[type] : BLOCK_COLOR[0];
                 float ox = (float)lx * bs;

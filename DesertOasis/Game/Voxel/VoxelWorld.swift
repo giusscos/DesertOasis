@@ -85,6 +85,11 @@ final class VoxelWorld {
         chunks[chunkKey(cx, cz)] != nil
     }
 
+    /// True only when terrain noise has filled the chunk (not an empty carve stub).
+    func hasGeneratedChunk(cx: Int, cz: Int) -> Bool {
+        chunk(cx: cx, cz: cz)?.isTerrainGenerated == true
+    }
+
     func unloadChunk(cx: Int, cz: Int) {
         let key = chunkKey(cx, cz)
         guard chunks.removeValue(forKey: key) != nil else { return }
@@ -103,9 +108,19 @@ final class VoxelWorld {
     func setBlock(at bx: Int, by: Int, bz: Int, type: VoxelType) {
         guard by >= 0, by < VoxelChunk.sizeY else { return }
         let (cx, cz) = chunkCoord(blockX: bx, blockZ: bz)
-        guard let chunk = self.chunk(cx: cx, cz: cz, create: true) else { return }
+        // Never create empty air stubs — callers must generateChunk first.
+        // Stub chunks look like missing rectangular terrain forever because streaming
+        // treats hasChunk as "already loaded".
+        guard let chunk = self.chunk(cx: cx, cz: cz, create: false),
+              chunk.isTerrainGenerated
+        else { return }
         let (lx, ly, lz) = localCoord(blockX: bx, blockY: by, blockZ: bz)
         chunk.setBlock(lx: lx, ly: ly, lz: lz, type: type)
+        // When a block sits on a chunk boundary its face is part of the neighbor's mesh too.
+        if lx == 0 { self.chunk(cx: cx - 1, cz: cz)?.isDirty = true }
+        if lx == VoxelChunk.sizeX - 1 { self.chunk(cx: cx + 1, cz: cz)?.isDirty = true }
+        if lz == 0 { self.chunk(cx: cx, cz: cz - 1)?.isDirty = true }
+        if lz == VoxelChunk.sizeZ - 1 { self.chunk(cx: cx, cz: cz + 1)?.isDirty = true }
     }
 
     func surfaceY(atWorldX wx: Float, worldZ wz: Float) -> Float {

@@ -11,6 +11,8 @@ final class VoxelChunk {
     let cz: Int
     private var blocks: [UInt8]
     var isDirty = true
+    /// True after `loadBlocks` from terrain gen. False for empty stubs — must not count as loaded.
+    var isTerrainGenerated = false
 
     init(cx: Int, cz: Int) {
         self.cx = cx
@@ -60,5 +62,6 @@ final class VoxelChunk {
         precondition(raw.count == Self.volume)
         blocks = raw
         isDirty = true
+        isTerrainGenerated = true
     }
 }

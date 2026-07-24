@@ -1,7 +1,7 @@
 import SceneKit
 import UIKit
 
-/// Occasional daytime sandstorms — atmosphere only (fog + compass jitter).
+/// Occasional daytime sandstorms — fog boost, dust, compass jitter.
 final class WeatherSystem {
     private(set) var isSandstormActive = false
     /// 0…1 storm intensity while active.
@@ -79,12 +79,34 @@ final class WeatherSystem {
         onStormEnded?()
     }
 
-    /// Apply fog color/density tweak for the active storm.
-    func applyFog(to scene: SCNScene, baseFogStart: CGFloat, baseFogEnd: CGFloat, sandColor: UIColor) {
-        guard isSandstormActive else { return }
+    /// Storm-tightened fog range for the Metal atmosphere pass (SceneKit fog stays off).
+    func metalFogRange(baseFogStart: CGFloat, baseFogEnd: CGFloat) -> (start: CGFloat, end: CGFloat) {
+        guard isSandstormActive else { return (baseFogStart, baseFogEnd) }
         let t = CGFloat(intensity)
-        scene.fogStartDistance = max(8, baseFogStart * (1 - t * 0.55))
-        scene.fogEndDistance = max(40, baseFogEnd * (1 - t * 0.5))
-        scene.fogColor = sandColor.withAlphaComponent(0.55 + t * 0.35)
+        return (
+            max(8, baseFogStart * (1 - t * 0.55)),
+            max(40, baseFogEnd * (1 - t * 0.5))
+        )
+    }
+
+    /// Sand tint blended into Metal fog while storming.
+    func metalFogColor(base: UIColor) -> UIColor {
+        guard isSandstormActive else { return base }
+        let sand = UIColor(red: 0.82, green: 0.68, blue: 0.42, alpha: 1)
+        let t = CGFloat(0.35 + intensity * 0.45)
+        return Self.lerp(base, sand, t)
+    }
+
+    private static func lerp(_ a: UIColor, _ b: UIColor, _ t: CGFloat) -> UIColor {
+        var ar: CGFloat = 0, ag: CGFloat = 0, ab: CGFloat = 0, aa: CGFloat = 0
+        var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
+        a.getRed(&ar, green: &ag, blue: &ab, alpha: &aa)
+        b.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
+        return UIColor(
+            red: ar + (br - ar) * t,
+            green: ag + (bg - ag) * t,
+            blue: ab + (bb - ab) * t,
+            alpha: aa + (ba - aa) * t
+        )
     }
 }

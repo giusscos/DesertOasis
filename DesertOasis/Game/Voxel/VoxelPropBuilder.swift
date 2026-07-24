@@ -255,42 +255,61 @@ enum VoxelPropBuilder {
         let root = SCNNode()
         root.name = "prop_palm"
 
-        let trunk = VoxelSculpture(sizeX: 10, sizeY: 70, sizeZ: 10,
-                                   origin: SIMD3<Float>(-3, 0, -5) * uf)
-        // Slightly leaning trunk via stacked offset spheres
-        for y in 0..<68 {
-            let lean = Float(y) * 0.04
-            trunk.fillSphere(cx: 5 + lean, cy: Float(y), cz: 5, r: 2.2 - Float(y) * 0.005, type: .wood)
+        let trunk = VoxelSculpture(sizeX: 14, sizeY: 72, sizeZ: 14,
+                                   origin: SIMD3<Float>(-5, 0, -7) * uf)
+        // Tapered leaning trunk with slight bark banding
+        for y in 0..<70 {
+            let lean = Float(y) * 0.035
+            let r = 3.1 - Float(y) * 0.018
+            trunk.fillSphere(cx: 7 + lean, cy: Float(y), cz: 7, r: max(1.4, r), type: .wood)
+            if y % 7 == 0 {
+                trunk.fillSphere(cx: 7 + lean, cy: Float(y), cz: 7, r: max(1.5, r + 0.35), type: .darkWood)
+            }
         }
         root.addChildNode(trunk.makeNode(name: "trunk"))
 
         let crown = SCNNode()
-        crown.position = SCNVector3(0.45, 4.25, 0)
+        crown.position = SCNVector3(0.55, 4.35, 0)
         root.addChildNode(crown)
 
-        let nub = VoxelSculpture(sizeX: 10, sizeY: 6, sizeZ: 10,
-                                 origin: SIMD3<Float>(-5, -2, -5) * uf)
-        nub.fillSphere(cx: 5, cy: 2, cz: 5, r: 3.5, type: .leaf)
+        let nub = VoxelSculpture(sizeX: 12, sizeY: 8, sizeZ: 12,
+                                 origin: SIMD3<Float>(-6, -2, -6) * uf)
+        nub.fillSphere(cx: 6, cy: 3, cz: 6, r: 4.2, type: .leaf)
+        nub.fillSphere(cx: 6, cy: 5, cz: 6, r: 2.4, type: .cactus) // lighter crown heart
         crown.addChildNode(nub.makeNode(name: "crown_nub"))
 
-        for i in 0..<8 {
-            let angle = Float(i) / 8.0 * Float.pi * 2
-            let frond = VoxelSculpture(sizeX: 4, sizeY: 4, sizeZ: 22,
-                                       origin: SIMD3<Float>(-2, -1, 0) * uf)
-            // Tapered frond as chain of spheres
-            for z in 0..<20 {
-                let t = Float(z) / 20
-                let r = 1.6 * (1 - t * 0.85)
-                frond.fillSphere(cx: 2, cy: 1.5 - t * 0.8, cz: Float(z), r: r, type: .leaf)
+        // Dates cluster under crown
+        let dates = VoxelSculpture(sizeX: 8, sizeY: 8, sizeZ: 8,
+                                   origin: SIMD3<Float>(-4, -6, -4) * uf)
+        dates.fillSphere(cx: 4, cy: 3, cz: 4, r: 2.2, type: .darkWood)
+        dates.fillSphere(cx: 3, cy: 1, cz: 4, r: 1.4, type: .brass)
+        dates.fillSphere(cx: 5, cy: 1, cz: 5, r: 1.3, type: .brass)
+        crown.addChildNode(dates.makeNode(name: "dates"))
+
+        for i in 0..<12 {
+            let angle = Float(i) / 12.0 * Float.pi * 2
+            let frond = VoxelSculpture(sizeX: 7, sizeY: 8, sizeZ: 52,
+                                       origin: SIMD3<Float>(-3.5, -2, 0) * uf)
+            for z in 0..<50 {
+                let t = Float(z) / 50
+                let r = 2.6 * (1 - t * 0.9)
+                let droop = t * t * 4.2
+                frond.fillSphere(cx: 3.5, cy: 3.5 - droop, cz: Float(z), r: max(0.4, r), type: .leaf)
+                if z % 2 == 0 && z > 2 && z < 44 {
+                    let side = 1.15 * (1 - t * 0.7)
+                    frond.fillSphere(cx: 3.5 - side * 1.6, cy: 3.5 - droop, cz: Float(z), r: r * 0.55, type: .leaf)
+                    frond.fillSphere(cx: 3.5 + side * 1.6, cy: 3.5 - droop, cz: Float(z), r: r * 0.55, type: .leaf)
+                }
             }
             let node = frond.makeNode(name: "frond_\(i)")
-            node.eulerAngles = SCNVector3(0.35, angle, 0)
+            let pitch = 0.12 + Float(i % 3) * 0.06
+            node.eulerAngles = SCNVector3(pitch, angle, Float(i % 2 == 0 ? 0.04 : -0.04))
             crown.addChildNode(node)
         }
 
         crown.runAction(.repeatForever(.sequence([
-            .rotateBy(x: 0, y: 0, z: 0.08, duration: 2.2),
-            .rotateBy(x: 0, y: 0, z: -0.08, duration: 2.2)
+            .rotateBy(x: 0, y: 0, z: 0.06, duration: 2.4),
+            .rotateBy(x: 0, y: 0, z: -0.06, duration: 2.4)
         ])))
         return root
     }
@@ -951,16 +970,30 @@ enum VoxelPropBuilder {
 
         for oasis in oases {
             let palmCount = 3 + Int(rng.nextFloat() * 4)
-            for _ in 0..<palmCount {
+            var placed = 0
+            var attempts = 0
+            while placed < palmCount && attempts < palmCount * 12 {
+                attempts += 1
                 let angle = rng.nextFloat() * Float.pi * 2
-                let dist = oasis.radius * 0.72 + rng.nextFloat() * oasis.radius * 0.22
+                // On the sand bank around the pool — never in the water.
+                let dist = oasis.radius * 1.25 + rng.nextFloat() * (1.4 + oasis.radius * 0.35)
                 let px = oasis.position.x + cos(angle) * dist
                 let pz = oasis.position.z + sin(angle) * dist
+                let (bx, _, bz) = world.blockCoord(worldX: px, worldY: oasis.position.y, worldZ: pz)
+                // Skip if this column still has water near the surface
+                var wet = false
+                for by in 0..<VoxelChunk.sizeY {
+                    if world.block(at: bx, by: by, bz: bz) == .water { wet = true; break }
+                }
+                if wet { continue }
                 let h = world.surfaceY(atWorldX: px, worldZ: pz)
                 let palm = palmTree()
                 palm.position = SCNVector3(px, h, pz)
                 palm.eulerAngles.y = rng.nextFloat() * Float.pi * 2
+                let s = 0.9 + rng.nextFloat() * 0.25
+                palm.scale = SCNVector3(s, s, s)
                 container.addChildNode(palm)
+                placed += 1
             }
         }
 

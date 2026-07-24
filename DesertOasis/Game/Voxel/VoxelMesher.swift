@@ -59,8 +59,9 @@ enum VoxelMesher {
         mat.lightingModel    = .lambert
         mat.diffuse.contents = UIColor.white
         mat.isDoubleSided    = false
-        mat.transparencyMode = .aOne
-        mat.blendMode        = .alpha
+        // Opaque terrain — water is no longer in this mesh.
+        mat.writesToDepthBuffer = true
+        mat.shaderModifiers  = [.surface: MetalMaterialShaders.terrainSurface]
         geo.firstMaterial    = mat
         return geo
     }

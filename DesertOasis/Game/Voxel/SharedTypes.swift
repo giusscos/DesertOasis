@@ -3,6 +3,7 @@ import SceneKit
 /// Metadata about a placed oasis (position and pool radius in world-space metres).
 struct OasisInfo {
     var position: SCNVector3
+    /// Flat pool radius in metres.
     var radius: Float
     var landmark: LandmarkKind? = nil
 

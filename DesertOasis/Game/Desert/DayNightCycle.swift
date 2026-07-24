@@ -10,6 +10,8 @@ final class DayNightCycle {
     private(set) var timeOfDay: Float = 0.32
     /// Latest sky background color from the palette (for celestial tinting).
     private(set) var currentSkyColor: UIColor = UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
+    /// Sand-haze fog tint for Metal atmosphere pass.
+    private(set) var currentFogColor: UIColor = UIColor(red: 0.78, green: 0.72, blue: 0.62, alpha: 1)
 
     private weak var sunNode: SCNNode?
     private weak var ambientNode: SCNNode?
@@ -105,11 +107,15 @@ final class DayNightCycle {
             ambient.color = sample.ambientColor
             ambient.intensity = sample.ambientIntensity
         }
-        if let skyMaterial {
-            skyMaterial.diffuse.contents = sample.skyColor
+        // Procedural Metal sky owns the dome look; keep a matching clear color for the technique.
+        if skyMaterial?.program == nil {
+            skyMaterial?.diffuse.contents = sample.skyColor
         }
         currentSkyColor = sample.skyColor
+        currentFogColor = sample.fogColor
         scene?.background.contents = sample.skyColor
+        // SceneKit distance fog is disabled — MetalAtmosphere applies depth-aware fog.
+        scene?.fogEndDistance = 0
         scene?.fogColor = sample.fogColor
     }
 

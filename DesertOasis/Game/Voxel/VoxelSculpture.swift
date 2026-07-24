@@ -184,7 +184,8 @@ final class VoxelSculpture {
                     let ui = colorOverride?(type) ?? type.color
                     var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
                     ui.getRed(&r, green: &g, blue: &b, alpha: &a)
-                    let alpha: Float = type == .water ? 0.72 : (type == .leaf ? 0.85 : Float(a))
+                    // Keep props opaque — translucent leaf/water verts force whole-mesh alpha holes.
+                    let alpha: Float = type == .water ? 0.85 : 1.0
 
                     for face in faces {
                         let nx = x + face.dx, ny = y + face.dy, nz = z + face.dz
@@ -243,8 +244,13 @@ final class VoxelSculpture {
         mat.lightingModel = .lambert
         mat.diffuse.contents = UIColor.white
         mat.isDoubleSided = false
-        mat.transparencyMode = .aOne
-        mat.blendMode = .alpha
+        let needsAlpha = cells.contains(where: {
+            $0 == VoxelType.water.rawValue
+        })
+        if needsAlpha {
+            mat.transparencyMode = .aOne
+            mat.blendMode = .alpha
+        }
         // Soft self-light for canvas interiors
         if cells.contains(where: { $0 == VoxelType.canvas.rawValue }) {
             mat.emission.contents = UIColor(white: 0.08, alpha: 1)

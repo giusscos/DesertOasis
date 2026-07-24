@@ -100,9 +100,13 @@ final class CampOasisGrowthNode: SCNNode {
 
         let waterGeo = SCNCylinder(radius: 1.0, height: 0.08)
         let waterMat = SCNMaterial()
-        waterMat.diffuse.contents = UIColor(red: 0.22, green: 0.55, blue: 0.78, alpha: 0.78)
-        waterMat.transparency = 0.72
-        waterMat.lightingModel = .lambert
+        waterMat.diffuse.contents = UIColor(red: 0.18, green: 0.52, blue: 0.72, alpha: 1)
+        waterMat.transparency = 0.42
+        waterMat.lightingModel = .blinn
+        waterMat.specular.contents = UIColor(white: 1, alpha: 0.7)
+        waterMat.shininess = 0.85
+        waterMat.writesToDepthBuffer = false
+        waterMat.shaderModifiers = [.surface: MetalMaterialShaders.waterSurface]
         waterGeo.firstMaterial = waterMat
         waterDisc.geometry = waterGeo
         waterDisc.position = SCNVector3(0, 0.05, 0)
@@ -150,17 +154,9 @@ final class CampOasisGrowthNode: SCNNode {
     }
 
     private func makePalm() -> SCNNode {
-        let root = SCNNode()
-        let s = VoxelSculpture(sizeX: 10, sizeY: 28, sizeZ: 10,
-                               origin: SIMD3<Float>(-5, 0, -5) * VoxelMetrics.unit)
-        s.fillCylinder(c0: 5, c1: 5, a0: 0, a1: 20, radius: 1.1, type: .wood)
-        s.fillSphere(cx: 5, cy: 22, cz: 5, r: 3.5, type: .leaf)
-        s.fillSphere(cx: 2, cy: 21, cz: 5, r: 2.4, type: .leaf)
-        s.fillSphere(cx: 8, cy: 21, cz: 5, r: 2.4, type: .leaf)
-        s.fillSphere(cx: 5, cy: 21, cz: 2, r: 2.4, type: .leaf)
-        s.fillSphere(cx: 5, cy: 21, cz: 8, r: 2.4, type: .leaf)
-        root.addChildNode(s.makeNode(name: "palm_mesh"))
-        return root
+        let palm = VoxelPropBuilder.palmTree()
+        palm.scale = SCNVector3(0.72, 0.72, 0.72)
+        return palm
     }
 
     private func applyVisual(animated: Bool) {

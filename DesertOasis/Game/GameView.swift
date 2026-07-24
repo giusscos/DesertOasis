@@ -1675,6 +1675,13 @@ struct GameSceneView: UIViewRepresentable {
         v.antialiasingMode = .multisampling4X
         v.isPlaying = true
         v.preferredFramesPerSecond = 60
+        // Metal atmosphere / water look better with HDR; bloom stays subtle.
+        if let cam = scene.cameraNode.camera {
+            cam.wantsHDR = true
+            cam.bloomIntensity = 0.35
+            cam.bloomThreshold = 0.85
+            cam.bloomBlurRadius = 4
+        }
         v.backgroundColor = UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
         v.onKeyDown = { [weak coordinator = context.coordinator] key in
             coordinator?.onKeyDown?(key)

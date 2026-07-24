@@ -39,12 +39,14 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var ambientLightNode: SCNNode!
     private var skyNode: SCNNode!
     private let skyCelestials = SkyCelestials()
+    private let metalAtmosphere = MetalAtmosphere()
     private var skyDetailsEnabled = true
     private(set) var isSleeping = false
     private var sleepCameraNode: SCNNode?
     private var weather: WeatherSystem!
     private var baseFogStart: CGFloat = 80
     private var baseFogEnd: CGFloat = 120
+    private var propsRoot: SCNNode?
     private var lastTimeOfDaySample: Float = 0.32
     private var eveningGatherActive = false
     private var pendingRespawns: [PendingNPCRespawn] = []
@@ -149,6 +151,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         setupLighting()
         setupSky()
         setupSandHaze()
+        metalAtmosphere.attachDust(to: rootNode)
+        metalAtmosphere.skyDetailsSunDisk = skyDetailsEnabled ? 1 : 0
         skyCelestials.attach(to: rootNode, sunLightNode: sunNode)
         skyCelestials.setEnabled(skyDetailsEnabled)
         dayNight.attach(scene: self, sun: sunNode, ambient: ambientLightNode, sky: skyNode)
@@ -224,6 +228,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         let props = VoxelPropBuilder.scatterProps(
             world: voxelWorld, oases: oases, seed: slot.desertSeed, campClearRadius: 26
         )
+        propsRoot = props
         rootNode.addChildNode(props)
 
         spawnNPCs(for: camp)
@@ -249,7 +254,11 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private func addWaterBody(for oasis: OasisInfo) {
         let container = SCNNode()
         container.position = SCNVector3(oasis.position.x, oasis.position.y, oasis.position.z)
-        let water = OasisWaterNode(radius: oasis.radius)
+        let water = OasisWaterNode(
+            radius: oasis.radius,
+            oasisWorldX: oasis.position.x,
+            oasisWorldZ: oasis.position.z
+        )
         container.addChildNode(water)
         if let landmark = oasis.landmark {
             let accent = VoxelPropBuilder.landmarkAccent(kind: landmark)
@@ -282,7 +291,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         let camera = SCNCamera()
         camera.fieldOfView = 62
         camera.zNear = 0.5
-        camera.zFar = 600
+        camera.zFar = 1400
+        metalAtmosphere.attach(to: camera)
         cameraNode.camera = camera
         cameraNode.constraints = nil
         cameraNode.eulerAngles = SCNVector3(-0.92, 0.15, 0)
@@ -331,34 +341,29 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     // MARK: - Sky
 
     private func setupSky() {
-        skyNode = SCNNode(geometry: SCNSphere(radius: 800))
+        // Keep dome inside camera zFar so corners never show the clear/background color.
+        skyNode = SCNNode(geometry: SCNSphere(radius: 700))
         skyNode.name = "sky"
         let mat = SCNMaterial()
-        mat.diffuse.contents = skyboxGradient()
-        mat.isDoubleSided = true
-        mat.lightingModel = .constant
+        mat.diffuse.contents = UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
+        metalAtmosphere.applySkyProgram(to: mat)
         skyNode.geometry?.firstMaterial = mat
-        skyNode.geometry?.firstMaterial?.cullMode = .front
+        skyNode.castsShadow = false
+        skyNode.renderingOrder = -10
         rootNode.addChildNode(skyNode)
     }
 
-    private func skyboxGradient() -> UIColor {
-        UIColor(red: 0.55, green: 0.78, blue: 0.95, alpha: 1)
-    }
-
     /// Soft sand haze at the stream rim — hides chunk pop-in without muddying camp scale.
+    /// Applied via MetalAtmosphere depth fog so the procedural sky stays clear when looking up.
     private func setupSandHaze() {
         let chunkMeters = CGFloat(VoxelChunk.sizeX) * CGFloat(VoxelMetrics.blockSize)
         let loadEdge = chunkMeters * CGFloat(streamLoadRadius)
-        // Clear through camp-discover range; fully opaque just past the loaded ring.
         baseFogStart = loadEdge * 0.68
         baseFogEnd = loadEdge * 1.08
-        fogStartDistance = baseFogStart
-        fogEndDistance = baseFogEnd
-
-        // SceneKit fogs all geometry; a sky dome would become solid haze when looking up.
-        // `background.contents` (driven by DayNightCycle) stays unfogged.
-        skyNode?.isHidden = true
+        // Disable SceneKit fog; Metal post-pass owns haze.
+        fogStartDistance = 0
+        fogEndDistance = 0
+        skyNode?.isHidden = false
     }
 
     // MARK: - Player
@@ -404,7 +409,12 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         let camera = SCNCamera()
         camera.fieldOfView = 65
         camera.zNear = 0.2
-        camera.zFar = 500
+        camera.zFar = 1400
+        camera.wantsHDR = true
+        camera.bloomIntensity = 0.35
+        camera.bloomThreshold = 0.85
+        camera.bloomBlurRadius = 4
+        metalAtmosphere.attach(to: camera)
         cameraNode.camera = camera
         cameraNode.eulerAngles = SCNVector3Zero
         cameraNode.position = SCNVector3(0, 0, cameraDistance)
@@ -1007,17 +1017,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         lastTimeOfDaySample = dayNight.timeOfDay
 
         weather?.update(deltaTime: dt, timeOfDay: dayNight.timeOfDay, isDaytime: dayNight.isDaytime)
-        if let weather, weather.isSandstormActive {
-            weather.applyFog(
-                to: self,
-                baseFogStart: baseFogStart,
-                baseFogEnd: baseFogEnd,
-                sandColor: UIColor(red: 0.82, green: 0.68, blue: 0.42, alpha: 1)
-            )
-        } else {
-            fogStartDistance = baseFogStart
-            fogEndDistance = baseFogEnd
-        }
+        fogStartDistance = 0
+        fogEndDistance = 0
 
         timePersistAccumulator += dt
         if timePersistAccumulator >= 4 {
@@ -1059,15 +1060,65 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         syncCameraFollow()
         resolveCameraCollision(deltaTime: dt)
 
-        // Keep sky dome centered on player so it never clips at the horizon.
+        // Keep sky dome centered on player (incl. height) so FOV corners stay filled.
         if let playerNode {
-            skyNode?.position = SCNVector3(playerNode.position.x, 0, playerNode.position.z)
+            skyNode?.position = SCNVector3(playerNode.position.x, playerNode.position.y, playerNode.position.z)
             skyCelestials.update(
                 playerPosition: playerNode.position,
                 daylightFactor: dayNight.daylightFactor,
                 skyColor: dayNight.currentSkyColor,
                 deltaTime: dt
             )
+            let fogRange = weather?.metalFogRange(baseFogStart: baseFogStart, baseFogEnd: baseFogEnd)
+                ?? (start: baseFogStart, end: baseFogEnd)
+            let fogCol = weather?.metalFogColor(base: dayNight.currentFogColor) ?? dayNight.currentFogColor
+            let cam = activeCameraNode.camera
+            metalAtmosphere.update(
+                deltaTime: dt,
+                timeOfDay: dayNight.timeOfDay,
+                daylightFactor: dayNight.daylightFactor,
+                skyColor: dayNight.currentSkyColor,
+                fogColor: fogCol,
+                fogStart: Float(fogRange.start),
+                fogEnd: Float(fogRange.end),
+                stormIntensity: weather?.isSandstormActive == true ? (weather?.intensity ?? 0) : 0,
+                sunNode: sunNode,
+                playerPosition: playerNode.position,
+                isDaytime: dayNight.isDaytime,
+                cameraNear: Float(cam?.zNear ?? 0.2),
+                cameraFar: Float(cam?.zFar ?? 1400)
+            )
+            updatePropVisibility(playerPosition: playerNode.position)
+            updateCampVisibility(playerPosition: playerNode.position)
+        }
+    }
+
+    /// Hide desert props whose chunk is unloaded or past the fog rim (avoids floating cacti/palms).
+    private func updatePropVisibility(playerPosition: SCNVector3) {
+        guard let propsRoot, let voxelWorld else { return }
+        let chunkMeters = Float(VoxelChunk.sizeX) * VoxelMetrics.blockSize
+        let maxDist = chunkMeters * Float(max(1, streamLoadRadius - 1))
+        let maxDistSq = maxDist * maxDist
+        for child in propsRoot.childNodes {
+            let dx = child.position.x - playerPosition.x
+            let dz = child.position.z - playerPosition.z
+            let distSq = dx * dx + dz * dz
+            let (bx, _, bz) = voxelWorld.blockCoord(
+                worldX: child.position.x, worldY: 0, worldZ: child.position.z
+            )
+            let (cx, cz) = voxelWorld.chunkCoord(blockX: bx, blockZ: bz)
+            let loaded = voxelWorld.hasGeneratedChunk(cx: cx, cz: cz)
+            child.isHidden = !loaded || distSq > maxDistSq
+        }
+    }
+
+    /// Hide all camp nodes beyond the fog rim.
+    private func updateCampVisibility(playerPosition: SCNVector3) {
+        let maxDistSq: Float = 85 * 85
+        for campNode in camps {
+            let dx = campNode.position.x - playerPosition.x
+            let dz = campNode.position.z - playerPosition.z
+            campNode.isHidden = dx * dx + dz * dz > maxDistSq
         }
     }
 
@@ -1075,17 +1126,28 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     func setSkyDetailsEnabled(_ enabled: Bool) {
         skyDetailsEnabled = enabled
         skyCelestials.setEnabled(enabled)
+        metalAtmosphere.skyDetailsSunDisk = enabled ? 1 : 0
     }
 
     private func updateNPCs(deltaTime: Float) {
+        guard let playerNode else { return }
+        let maxDistSq: Float = 85 * 85
         for npc in npcs {
             npc.updateWander(deltaTime: deltaTime)
+            let dx = npc.position.x - playerNode.position.x
+            let dz = npc.position.z - playerNode.position.z
+            npc.isHidden = dx * dx + dz * dz > maxDistSq
         }
     }
 
     private func updateAnimals(deltaTime: Float) {
+        guard let playerNode else { return }
+        let maxDistSq: Float = 85 * 85
         for animal in animals {
             animal.updateWander(deltaTime: deltaTime)
+            let dx = animal.position.x - playerNode.position.x
+            let dz = animal.position.z - playerNode.position.z
+            animal.isHidden = !animal.isFollowingPlayer && (dx * dx + dz * dz > maxDistSq)
         }
     }
 
@@ -1259,7 +1321,11 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             )
             if water.contains(worldPosition: playerNode.position) {
                 inside = true
-                if !isDepleted && !(toolRig?.isCarryingWater == true) { canCollect = true }
+            }
+            // Collect from the rim — player usually stands on sand, not in the pool.
+            if !isDepleted && !(toolRig?.isCarryingWater == true),
+               water.isNear(worldPosition: playerNode.position) {
+                canCollect = true
             }
         }
         isInWater = inside
@@ -1518,7 +1584,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     func tryCollectWater(enteredBody: OasisWaterNode? = nil) -> Bool {
         guard let toolRig, !toolRig.isCarryingWater, let playerNode else { return false }
         let body = enteredBody ?? waterBodies.first {
-            $0.contains(worldPosition: playerNode.position) &&
+            $0.isNear(worldPosition: playerNode.position) &&
             !depletedWaterBodies.contains(ObjectIdentifier($0))
         }
         guard let body, !depletedWaterBodies.contains(ObjectIdentifier(body)) else { return false }
@@ -1622,7 +1688,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         let camera = SCNCamera()
         camera.fieldOfView = 58
         camera.zNear = 0.3
-        camera.zFar = 900
+        camera.zFar = 1400
+        metalAtmosphere.attach(to: camera)
         cam.camera = camera
         let campPos = sleepCamp.position
         cam.position = SCNVector3(campPos.x + 14, campPos.y + 11, campPos.z + 18)
@@ -1662,6 +1729,22 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
                     skyColor: self.dayNight.currentSkyColor,
                     deltaTime: Float(stepDt)
                 )
+                self.skyNode?.position = SCNVector3(player.position.x, player.position.y, player.position.z)
+                self.metalAtmosphere.update(
+                    deltaTime: Float(stepDt),
+                    timeOfDay: self.dayNight.timeOfDay,
+                    daylightFactor: self.dayNight.daylightFactor,
+                    skyColor: self.dayNight.currentSkyColor,
+                    fogColor: self.dayNight.currentFogColor,
+                    fogStart: Float(self.baseFogStart),
+                    fogEnd: Float(self.baseFogEnd),
+                    stormIntensity: 0,
+                    sunNode: self.sunNode,
+                    playerPosition: player.position,
+                    isDaytime: self.dayNight.isDaytime,
+                    cameraNear: 0.3,
+                    cameraFar: 1400
+                )
             }
             // Gentle camera drift during timelapse
             if let sleepCam = self.sleepCameraNode {
@@ -1699,7 +1782,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         let needed = voxelWorld.chunkCoordinatesAround(
             worldX: px, worldZ: pz, radiusChunks: streamLoadRadius
         )
-        for coord in needed where !voxelWorld.hasChunk(cx: coord.cx, cz: coord.cz) {
+        for coord in needed where !voxelWorld.hasGeneratedChunk(cx: coord.cx, cz: coord.cz) {
             if !streamPending.contains(where: { $0.cx == coord.cx && $0.cz == coord.cz }) {
                 streamPending.append(coord)
             }
@@ -1709,7 +1792,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         var generated = 0
         while generated < streamChunksPerFrame, !streamPending.isEmpty {
             let coord = streamPending.removeFirst()
-            if voxelWorld.hasChunk(cx: coord.cx, cz: coord.cz) { continue }
+            if voxelWorld.hasGeneratedChunk(cx: coord.cx, cz: coord.cz) { continue }
             generator.generateChunk(into: voxelWorld, cx: coord.cx, cz: coord.cz)
             voxelWorld.remeshChunk(cx: coord.cx, cz: coord.cz, animated: true)
             generated += 1
@@ -1756,7 +1839,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             // Reserve the id immediately so we never double-queue on hitch frames.
             spawnedCampIDs.insert(next.id)
             let coords = voxelWorld.chunkCoordinatesAround(
-                worldX: next.worldX, worldZ: next.worldZ, radiusChunks: 3
+                // Cover oasis placement (up to ~40 m) + carve rim so carve never spills into unloaded chunks.
+                worldX: next.worldX, worldZ: next.worldZ, radiusChunks: 6
             )
             campSpawnPhase = .prepareChunks(site: next, coords: coords, index: 0)
         }
@@ -1767,7 +1851,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             while index < coords.count, generated < campPrepChunksPerFrame {
                 let c = coords[index]
                 index += 1
-                if voxelWorld.hasChunk(cx: c.cx, cz: c.cz) { continue }
+                if voxelWorld.hasGeneratedChunk(cx: c.cx, cz: c.cz) { continue }
                 generator.generateChunk(into: voxelWorld, cx: c.cx, cz: c.cz)
                 voxelWorld.remeshChunk(cx: c.cx, cz: c.cz, animated: false)
                 generated += 1

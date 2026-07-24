@@ -66,7 +66,7 @@ enum VoxelType: UInt8 {
         case .water:     return UIColor(red: 0.22, green: 0.55, blue: 0.78, alpha: 0.72)
         case .cactus:    return UIColor(red: 0.28, green: 0.55, blue: 0.28, alpha: 1)
         case .wood:      return UIColor(red: 0.50, green: 0.36, blue: 0.20, alpha: 1)
-        case .leaf:      return UIColor(red: 0.25, green: 0.48, blue: 0.22, alpha: 1)
+        case .leaf:      return UIColor(red: 0.22, green: 0.52, blue: 0.20, alpha: 1)
         case .canvas:    return UIColor(red: 0.72, green: 0.62, blue: 0.42, alpha: 1)
         case .cloth:     return UIColor(red: 0.55, green: 0.35, blue: 0.25, alpha: 1)
         case .darkWood:  return UIColor(red: 0.30, green: 0.20, blue: 0.12, alpha: 1)
