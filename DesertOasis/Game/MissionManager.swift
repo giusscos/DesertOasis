@@ -76,6 +76,12 @@ final class MissionManager {
             body: "A lost traveller is desperate and disoriented. Give them your water — it is the only compass they need right now.",
             isNPCOffered: true
         ),
+        .init(
+            id: "ancient_spring",
+            title: "Ancient Spring",
+            body: "Landmark waters still hide in the dunes. Seek a shrine spring, mirrored pool, or canyon well.",
+            isNPCOffered: false
+        ),
     ]
 
     private(set) var records: [MissionRecord] = []
@@ -146,6 +152,16 @@ final class MissionManager {
         guard let i = records.firstIndex(where: { $0.id == id && $0.status == .active }) else { return }
         records[i].status = .failed
         records[i].isNew = true
+    }
+
+    /// Re-activates a failed (or completed) mission when an NPC returns.
+    func reactivate(_ id: String) {
+        if let i = records.firstIndex(where: { $0.id == id }) {
+            records[i].status = .active
+            records[i].isNew = true
+        } else {
+            unlock(id)
+        }
     }
 
     /// Clears isNew on all records — call when the player opens the missions list.

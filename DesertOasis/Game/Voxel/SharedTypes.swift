@@ -4,6 +4,11 @@ import SceneKit
 struct OasisInfo {
     var position: SCNVector3
     var radius: Float
+    var landmark: LandmarkKind? = nil
+
+    var displayName: String {
+        landmark?.displayName ?? "Oasis"
+    }
 }
 
 /// Seeded location where a camp can exist in the infinite desert.

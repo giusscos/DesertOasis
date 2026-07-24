@@ -68,6 +68,15 @@ final class DayNightCycle {
         timeOfDay > 0.68 || timeOfDay < 0.22
     }
 
+    var isDaytime: Bool {
+        timeOfDay >= 0.28 && timeOfDay <= 0.72
+    }
+
+    /// True when the clock just crossed into dawn (~0.22).
+    func didCrossDawn(from previous: Float) -> Bool {
+        previous < 0.22 && timeOfDay >= 0.22
+    }
+
     /// 0 at deep night, 1 at full day — useful for lantern/campfire boost.
     var daylightFactor: Float {
         let t = timeOfDay

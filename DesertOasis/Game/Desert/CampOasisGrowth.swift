@@ -8,6 +8,7 @@ enum OasisGrowthStage: Int, Codable, CaseIterable, Comparable {
     case puddle = 2
     case pond = 3
     case lush = 4
+    case flourishing = 5
 
     static func < (lhs: OasisGrowthStage, rhs: OasisGrowthStage) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -15,11 +16,12 @@ enum OasisGrowthStage: Int, Codable, CaseIterable, Comparable {
 
     var displayName: String {
         switch self {
-        case .barren: "Barren sand"
-        case .damp:   "Damp earth"
-        case .puddle: "Tiny puddle"
-        case .pond:   "Camp pond"
-        case .lush:   "Living oasis"
+        case .barren:       "Barren sand"
+        case .damp:         "Damp earth"
+        case .puddle:       "Tiny puddle"
+        case .pond:         "Camp pond"
+        case .lush:         "Living oasis"
+        case .flourishing:  "Flourishing"
         }
     }
 
@@ -63,7 +65,7 @@ final class CampOasisGrowthNode: SCNNode {
     /// Called when NPCs irrigate. Returns true if the stage advanced.
     @discardableResult
     func addProgress(_ amount: Float) -> Bool {
-        guard stage != .lush else {
+        guard stage != .flourishing else {
             progress = 1
             return false
         }
@@ -71,7 +73,7 @@ final class CampOasisGrowthNode: SCNNode {
         var advanced = false
         if progress >= 1, let next = stage.next {
             stage = next
-            progress = stage == .lush ? 1 : 0
+            progress = stage == .flourishing ? 1 : 0
             advanced = true
         }
         applyVisual(animated: true)
@@ -79,8 +81,8 @@ final class CampOasisGrowthNode: SCNNode {
     }
 
     var overallFraction: Float {
-        let stages = Float(OasisGrowthStage.lush.rawValue)
-        return (Float(stage.rawValue) + (stage == .lush ? 1 : progress)) / (stages + 1)
+        let stages = Float(OasisGrowthStage.flourishing.rawValue)
+        return (Float(stage.rawValue) + (stage == .flourishing ? 1 : progress)) / (stages + 1)
     }
 
     // MARK: - Visuals
@@ -123,6 +125,7 @@ final class CampOasisGrowthNode: SCNNode {
 
         let palmOffsets: [(Float, Float, Float)] = [
             (-2.4, 0.2, 0.4), (2.6, -0.3, -0.5), (0.3, 2.5, 0.2),
+            (-1.8, -2.2, 1.1), (2.1, 2.0, -0.8),
         ]
         for (i, off) in palmOffsets.enumerated() {
             let palm = makePalm()
@@ -176,29 +179,41 @@ final class CampOasisGrowthNode: SCNNode {
         case .puddle: waterScale = 0.35 + progress * 0.45
         case .pond:   waterScale = 0.85 + progress * 0.45
         case .lush:   waterScale = 1.45
+        case .flourishing: waterScale = 1.7
         default:      waterScale = 0.01
         }
         setNode(waterDisc, visible: waterVisible, scale: waterScale, animated: animated)
 
         // Plants from pond
         let plantVisible = stage >= .pond
-        let plantScale: Float = stage == .pond ? 0.35 + progress * 0.65 : (stage == .lush ? 1.0 : 0.01)
+        let plantScale: Float
+        switch stage {
+        case .pond: plantScale = 0.35 + progress * 0.65
+        case .lush: plantScale = 1.0
+        case .flourishing: plantScale = 1.2
+        default: plantScale = 0.01
+        }
         for plant in plantNodes {
             setNode(plant, visible: plantVisible, scale: plantScale, animated: animated)
         }
 
-        // Palms at lush
+        // Palms at lush+; extra palms only fully show when flourishing
         let palmVisible = stage >= .lush || (stage == .pond && progress > 0.7)
         let palmScale: Float
-        if stage == .lush {
+        if stage == .flourishing {
+            palmScale = 1.05
+        } else if stage == .lush {
             palmScale = 0.7 + progress * 0.3
         } else if stage == .pond && progress > 0.7 {
             palmScale = (progress - 0.7) / 0.3 * 0.55
         } else {
             palmScale = 0.01
         }
-        for palm in palmNodes {
-            setNode(palm, visible: palmVisible && palmScale > 0.05, scale: max(0.01, palmScale), animated: animated)
+        for (i, palm) in palmNodes.enumerated() {
+            let extra = i >= 3
+            let show = palmVisible && palmScale > 0.05 && (!extra || stage >= .flourishing)
+            let scale = extra && stage == .flourishing ? palmScale * 0.85 : palmScale
+            setNode(palm, visible: show, scale: max(0.01, scale), animated: animated)
         }
 
     }

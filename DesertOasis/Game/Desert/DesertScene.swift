@@ -42,12 +42,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var skyDetailsEnabled = true
     private(set) var isSleeping = false
     private var sleepCameraNode: SCNNode?
+    private var weather: WeatherSystem!
+    private var baseFogStart: CGFloat = 80
+    private var baseFogEnd: CGFloat = 120
+    private var lastTimeOfDaySample: Float = 0.32
+    private var eveningGatherActive = false
+    private var pendingRespawns: [PendingNPCRespawn] = []
 
     var onNPCProximity: ((NPCNode) -> Void)?
     var onOasisReached: ((OasisInfo) -> Void)?
     var onWaterCollected: (() -> Void)?
-    /// level, unlockedCompass, unlockedDetector, campId
-    var onWaterDelivered: ((Float, Bool, Bool, String) -> Void)?
+    /// level, unlockedCompass, unlockedDetector, campId, helperBonus
+    var onWaterDelivered: ((Float, Bool, Bool, String, Bool) -> Void)?
     var onNearBarrel: ((Bool) -> Void)?
     var onCampDrained: ((Float, String) -> Void)?
     var onWaterGivenToNPC: ((NPCNode) -> Void)?
@@ -58,6 +64,20 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     var onCampDiscovered: ((CampSite) -> Void)?
     var onTimeOfDayChanged: ((Float) -> Void)?
     var onSleepFinished: (() -> Void)?
+    var onSandstormBegan: (() -> Void)?
+    var onSandstormEnded: (() -> Void)?
+    var onLandmarkDiscovered: ((LandmarkKind) -> Void)?
+    var onPleaMissionExpired: ((String) -> Void)?
+    var onHelperStateChanged: ((String?, Bool) -> Void)?
+    var onPendingRespawnsChanged: (([PendingNPCRespawn]) -> Void)?
+    var onWildNPCReturned: ((NPCPersonality) -> Void)?
+    var onNearHelperAnimal: ((AnimalNode?) -> Void)?
+    /// Compass needle angle in radians (0 = north ahead of player). `nil` when HUD should hide.
+    var onCompassHUD: ((Float?) -> Void)?
+    /// Detector signal 0…1. `nil` when HUD should hide.
+    var onDetectorHUD: ((Float?) -> Void)?
+
+    private var wasNearHelper: AnimalNode?
 
     private var playerHorizontalSpeed: Float = 0
     private var isInWater = false
@@ -117,7 +137,12 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         buildSlot = slot
         worldSeed = slot.desertSeed
         deliveryCount = slot.waterDeliveries
+        pendingRespawns = slot.pendingWildNPCRespawns
         campSites = CampSiteGenerator.sites(seed: slot.desertSeed)
+        weather = WeatherSystem(seed: slot.desertSeed)
+        weather.onStormBegan = { [weak self] in self?.onSandstormBegan?() }
+        weather.onStormEnded = { [weak self] in self?.onSandstormEnded?() }
+        lastTimeOfDaySample = slot.timeOfDay
         slotCampProgress = Dictionary(slot.campProgress.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         dayNight.setTimeOfDay(slot.timeOfDay)
 
@@ -181,7 +206,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         let homeSites = campSites.filter(\.isHome)
         let ring1 = campSites.filter { !$0.isHome }.prefix(4)
         let initialSites = homeSites + Array(ring1)
-        oases = generator.placeAndCarveOases(into: voxelWorld, nearSites: initialSites, oasisCount: 6)
+        oases = generator.placeAndCarveOases(into: voxelWorld, nearSites: initialSites, oasisCount: 8)
         for oasis in oases {
             placedOasisKeys.insert(oasisKey(oasis))
         }
@@ -224,8 +249,13 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private func addWaterBody(for oasis: OasisInfo) {
         let container = SCNNode()
         container.position = SCNVector3(oasis.position.x, oasis.position.y, oasis.position.z)
-        let water = OasisWaterNode(radius: oasis.radius, resolution: 18)
+        let water = OasisWaterNode(radius: oasis.radius)
         container.addChildNode(water)
+        if let landmark = oasis.landmark {
+            let accent = VoxelPropBuilder.landmarkAccent(kind: landmark)
+            accent.position = SCNVector3(oasis.radius * 0.9, 0, oasis.radius * 0.35)
+            container.addChildNode(accent)
+        }
         rootNode.addChildNode(container)
         waterBodies.append(water)
     }
@@ -321,8 +351,10 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         let chunkMeters = CGFloat(VoxelChunk.sizeX) * CGFloat(VoxelMetrics.blockSize)
         let loadEdge = chunkMeters * CGFloat(streamLoadRadius)
         // Clear through camp-discover range; fully opaque just past the loaded ring.
-        fogStartDistance = loadEdge * 0.68
-        fogEndDistance = loadEdge * 1.08
+        baseFogStart = loadEdge * 0.68
+        baseFogEnd = loadEdge * 1.08
+        fogStartDistance = baseFogStart
+        fogEndDistance = baseFogEnd
 
         // SceneKit fogs all geometry; a sky dome would become solid haze when looking up.
         // `background.contents` (driven by DayNightCycle) stays unfogged.
@@ -348,7 +380,22 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         toolRig.setCarryingWater(slot.isCarryingWater)
         toolRig.setCompassUnlocked(slot.hasWaterCompass)
         toolRig.setDetectorUnlocked(slot.hasWaterDetector)
+        toolRig.setLanternUnlocked(slot.hasLantern)
+        let equipped = EquippableTool.resolved(slot.equippedTool, slot: slot)
+        toolRig.setEquipped(equipped)
         playerNode.addChildNode(toolRig)
+
+        if slot.hasCampTrinket {
+            camp?.setCampTrinketVisible(true)
+        }
+
+        // Restore animal helper after animals spawn
+        if let kindRaw = slot.helperAnimalKind,
+           let kind = AnimalKind(rawValue: kindRaw),
+           kind.canHelpCarryWater,
+           let helper = animals.first(where: { $0.kind == kind && !$0.isFollowingPlayer }) {
+            helper.beginHelping(player: playerNode, carryingWater: slot.isHelperCarryingWater)
+        }
     }
 
     // MARK: - Camera
@@ -952,7 +999,26 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         }
 
         toolTime += dt
+        let previousTOD = dayNight.timeOfDay
         dayNight.update(deltaTime: dt)
+        if dayNight.didCrossDawn(from: previousTOD) {
+            expirePleaMissionsAtDawn()
+        }
+        lastTimeOfDaySample = dayNight.timeOfDay
+
+        weather?.update(deltaTime: dt, timeOfDay: dayNight.timeOfDay, isDaytime: dayNight.isDaytime)
+        if let weather, weather.isSandstormActive {
+            weather.applyFog(
+                to: self,
+                baseFogStart: baseFogStart,
+                baseFogEnd: baseFogEnd,
+                sandColor: UIColor(red: 0.82, green: 0.68, blue: 0.42, alpha: 1)
+            )
+        } else {
+            fogStartDistance = baseFogStart
+            fogEndDistance = baseFogEnd
+        }
+
         timePersistAccumulator += dt
         if timePersistAccumulator >= 4 {
             timePersistAccumulator = 0
@@ -978,6 +1044,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             c.updateIrrigation(deltaTime: dt, hasCampNPCs: hasNPCs || c.site.isHome)
         }
 
+        updateEveningGather()
         applyMovement(deltaTime: dt)
         updateNPCs(deltaTime: dt)
         updateAnimals(deltaTime: dt)
@@ -986,6 +1053,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         checkProximity()
         checkBarrelProximity()
         checkBedProximity()
+        checkHelperProximity()
         updateStreaming()
         discoverNearbyCamps()
         syncCameraFollow()
@@ -1204,20 +1272,36 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private func updateTools() {
         guard let playerNode, let toolRig else { return }
 
-        if toolRig.hasCompass, let nearest = nearestOasisDirection() {
-            toolRig.updateCompass(playerYaw: playerNode.eulerAngles.y, directionXZ: nearest)
+        if toolRig.hasCompass, toolRig.equipped == .compass {
+            // World north = −Z (matches default camera-forward facing).
+            // Relative angle 0 means the player is facing north.
+            let northBearing = Float.pi
+            let jitter = weather?.compassJitter ?? 0
+            onCompassHUD?(northBearing - playerNode.eulerAngles.y + jitter)
+        } else {
+            onCompassHUD?(nil)
         }
 
-        if toolRig.hasDetector {
-            toolRig.updateDetector(signal: nearestWaterSignal(), time: toolTime)
+        if toolRig.hasDetector, toolRig.equipped == .detector {
+            let clarity = weather?.detectorClarity ?? 1
+            let signal = nearestWaterSignal() * clarity
+            toolRig.updateDetector(
+                signal: nearestWaterSignal(),
+                time: toolTime,
+                clarity: clarity
+            )
+            onDetectorHUD?(max(0, min(1, signal)))
+        } else {
+            onDetectorHUD?(nil)
         }
     }
 
-    private func nearestOasisDirection() -> SIMD2<Float>? {
-        guard let playerNode, !oases.isEmpty else { return nil }
+    /// Nearest landmark spring after buying a map scrap (name for toast / detector hint).
+    func pingNearestLandmark() -> LandmarkKind? {
+        guard let playerNode else { return nil }
         var best: OasisInfo?
         var bestDist = Float.greatestFiniteMagnitude
-        for oasis in oases {
+        for oasis in oases where oasis.landmark != nil {
             let dx = oasis.position.x - playerNode.position.x
             let dz = oasis.position.z - playerNode.position.z
             let d = dx * dx + dz * dz
@@ -1226,12 +1310,171 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
                 best = oasis
             }
         }
-        guard let best else { return nil }
-        let dx = best.position.x - playerNode.position.x
-        let dz = best.position.z - playerNode.position.z
-        let len = sqrt(dx * dx + dz * dz)
-        guard len > 0.001 else { return nil }
-        return SIMD2<Float>(dx / len, dz / len)
+        return best?.landmark
+    }
+
+    func setEquippedTool(_ tool: EquippableTool) {
+        toolRig?.setEquipped(tool)
+    }
+
+    func unlockLantern() {
+        toolRig?.setLanternUnlocked(true)
+    }
+
+    var isSandstormActive: Bool { weather?.isSandstormActive == true }
+
+    var activeHelperAnimal: AnimalNode? {
+        animals.first { $0.isFollowingPlayer }
+    }
+
+    @discardableResult
+    func tryLoadHelperAnimal(_ animal: AnimalNode) -> Bool {
+        guard let playerNode, let toolRig else { return false }
+        guard animal.kind.canHelpCarryWater else { return false }
+        guard toolRig.isCarryingWater || animal.isCarryingWater else { return false }
+
+        if animals.contains(where: { $0.isFollowingPlayer && $0.animalID != animal.animalID }) {
+            animals.first { $0.isFollowingPlayer }?.stopHelping()
+        }
+
+        let carry = toolRig.isCarryingWater || animal.isCarryingWater
+        // Transfer: if player has water and animal empty, load animal AND keep player water
+        // (helper carries extra). If only animal has water, just follow.
+        if toolRig.isCarryingWater && !animal.isCarryingWater {
+            animal.beginHelping(player: playerNode, carryingWater: true)
+        } else {
+            animal.beginHelping(player: playerNode, carryingWater: animal.isCarryingWater || carry)
+        }
+        onHelperStateChanged?(animal.kind.rawValue, animal.isCarryingWater)
+        return true
+    }
+
+    func dismissHelperAnimal() {
+        guard let helper = activeHelperAnimal else { return }
+        helper.stopHelping()
+        onHelperStateChanged?(nil, false)
+    }
+
+    private func updateEveningGather() {
+        guard let home = camp else { return }
+        let lushEnough = home.oasisStage >= .lush
+        let evening = dayNight.timeOfDay > 0.68 || dayNight.timeOfDay < 0.22
+        let shouldGather = lushEnough && evening
+        guard shouldGather != eveningGatherActive else { return }
+        eveningGatherActive = shouldGather
+        guard shouldGather else { return }
+
+        let fire = home.position
+        for npc in npcs where !npc.personality.canReceiveWater {
+            let dx = npc.position.x - fire.x
+            let dz = npc.position.z - fire.z
+            if dx * dx + dz * dz < (home.site.padRadius + 4) * (home.site.padRadius + 4) {
+                // Soft gather: nudge home toward campfire
+                npc.configureWander(radius: 3.2, groundY: { [weak self] x, z in
+                    self?.groundY(x: x, z: z) ?? 0
+                }, isBlocked: { [weak self] x, z in
+                    self?.camps.contains { $0.isInsideTent(worldX: x, worldZ: z) } ?? false
+                })
+                // Re-home near fire
+                let angle = Float.random(in: 0...(2 * .pi))
+                let dist: Float = 2.2 + Float.random(in: 0...1.5)
+                let hx = fire.x - 1.8 + cos(angle) * dist
+                let hz = fire.z - 2.4 + sin(angle) * dist
+                npc.position = SCNVector3(hx, groundY(x: hx, z: hz), hz)
+            }
+        }
+
+        if home.oasisStage >= .flourishing {
+            // Extra oasis birds when flourishing evenings
+            let existingBirds = animals.filter { $0.kind == .bird }.count
+            if existingBirds < 8 {
+                let angle = Float.random(in: 0...(2 * .pi))
+                let dist: Float = 4 + Float.random(in: 0...3)
+                let wx = fire.x + cos(angle) * dist
+                let wz = fire.z - 5.5 + sin(angle) * dist
+                placeAnimal(kind: .bird, x: wx, z: wz, campNode: home, wanderOverride: 6)
+            }
+        }
+    }
+
+    private func expirePleaMissionsAtDawn() {
+        let wildPresent = npcs.filter { $0.personality.canReceiveWater && !$0.task.isCompleted }
+        for npc in wildPresent {
+            let missionId = npc.personality == .wanderer ? "wanderers_plea" : "lost_and_found"
+            onPleaMissionExpired?(missionId)
+            // Despawn unhelped travellers at dawn — they return later
+            scheduleWildRespawn(personality: npc.personality, helpCount: npc.helpCount, sleeps: 1)
+            npcs.removeAll { $0.npcID == npc.npcID }
+            npc.runAction(.sequence([
+                .fadeOut(duration: 0.8),
+                .removeFromParentNode()
+            ]))
+        }
+    }
+
+    private func scheduleWildRespawn(personality: NPCPersonality, helpCount: Int, sleeps: Int) {
+        let key: String
+        switch personality {
+        case .wanderer: key = "wanderer"
+        case .lost: key = "lost"
+        default: return
+        }
+        pendingRespawns.removeAll { $0.personality == key }
+        pendingRespawns.append(PendingNPCRespawn(
+            personality: key,
+            sleepsRemaining: sleeps,
+            helpCount: helpCount
+        ))
+        onPendingRespawnsChanged?(pendingRespawns)
+    }
+
+    private func processRespawnsAfterSleep() {
+        var next: [PendingNPCRespawn] = []
+        for var pending in pendingRespawns {
+            pending.sleepsRemaining -= 1
+            if pending.sleepsRemaining <= 0 {
+                respawnWildNPC(pending)
+            } else {
+                next.append(pending)
+            }
+        }
+        pendingRespawns = next
+        onPendingRespawnsChanged?(pendingRespawns)
+    }
+
+    private func respawnWildNPC(_ pending: PendingNPCRespawn) {
+        let personality: NPCPersonality
+        switch pending.personality {
+        case "wanderer": personality = .wanderer
+        case "lost": personality = .lost
+        default: return
+        }
+        // Avoid duplicates
+        if npcs.contains(where: { $0.personality == personality && !$0.task.isCompleted }) { return }
+
+        var rng = SeededRandom(seed: worldSeed &+ UInt64(pending.helpCount + 11) &* 97)
+        var pos = SCNVector3(45, 0, 30)
+        for _ in 0..<40 {
+            let angle = rng.nextFloat() * Float.pi * 2
+            let dist = 40 + rng.nextFloat() * 50
+            let wx = cos(angle) * dist
+            let wz = sin(angle) * dist
+            let h = groundY(x: wx, z: wz)
+            pos = SCNVector3(wx, h, wz)
+            break
+        }
+        let npc = NPCNode(personality: personality, position: pos)
+        npc.helpCount = pending.helpCount
+        npc.opacity = 0
+        npc.configureWander(radius: 9, groundY: { [weak self] x, z in
+            self?.groundY(x: x, z: z) ?? 0
+        }, isBlocked: { [weak self] x, z in
+            self?.camps.contains { $0.isInsideTent(worldX: x, worldZ: z) } ?? false
+        })
+        rootNode.addChildNode(npc)
+        npcs.append(npc)
+        npc.runAction(.fadeIn(duration: 1.0))
+        onWildNPCReturned?(personality)
     }
 
     private func nearestWaterSignal() -> Float {
@@ -1293,6 +1536,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         guard let toolRig, toolRig.isCarryingWater else { return }
         toolRig.setCarryingWater(false)
         npcs.removeAll { $0.npcID == npc.npcID }
+        npc.helpCount += 1
+        scheduleWildRespawn(personality: npc.personality, helpCount: npc.helpCount, sleeps: 1 + (npc.helpCount % 2))
         npc.completeTask()
         onWaterGivenToNPC?(npc)
     }
@@ -1300,13 +1545,34 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     @discardableResult
     func tryDeliverWater() -> Bool {
         guard let toolRig, let playerNode else { return false }
-        guard toolRig.isCarryingWater else { return false }
-        guard let target = camps.first(where: { $0.canDeliver(at: playerNode.position) }) else {
-            return false
+        let helper = activeHelperAnimal
+        let playerHas = toolRig.isCarryingWater
+        let helperHas = helper?.isCarryingWater == true
+        guard playerHas || helperHas else { return false }
+
+        let nearBarrel = camps.first(where: { $0.canDeliver(at: playerNode.position) })
+        let nearTrough = camps.first(where: { $0.canDeliverAtTrough(at: playerNode.position) })
+        guard let target = nearBarrel ?? nearTrough else { return false }
+
+        var helperBonus = false
+        if playerHas {
+            toolRig.setCarryingWater(false)
+            _ = target.deliverWater()
+        }
+        if helperHas, let helper {
+            _ = target.deliverHelperWater()
+            helper.setCarryingWater(false)
+            helper.stopHelping()
+            helperBonus = true
+            onHelperStateChanged?(nil, false)
+        } else if playerHas == false, helperHas, let helper {
+            // Delivered only helper water at trough/barrel
+            helper.stopHelping()
+            onHelperStateChanged?(nil, false)
+            helperBonus = true
         }
 
-        toolRig.setCarryingWater(false)
-        let level = target.deliverWater()
+        let level = target.fillLevel
         deliveryCount += 1
 
         var unlockedCompass = false
@@ -1320,13 +1586,17 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             unlockedDetector = true
         }
 
-        onWaterDelivered?(level, unlockedCompass, unlockedDetector, target.site.id)
+        onWaterDelivered?(level, unlockedCompass, unlockedDetector, target.site.id, helperBonus)
         return true
     }
 
     var canDeliverNow: Bool {
         guard let toolRig, let playerNode else { return false }
-        return toolRig.isCarryingWater && camps.contains { $0.canDeliver(at: playerNode.position) }
+        let hasWater = toolRig.isCarryingWater || (activeHelperAnimal?.isCarryingWater == true)
+        guard hasWater else { return false }
+        return camps.contains {
+            $0.canDeliver(at: playerNode.position) || $0.canDeliverAtTrough(at: playerNode.position)
+        }
     }
 
     var isCarryingWater: Bool { toolRig?.isCarryingWater == true }
@@ -1413,6 +1683,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         cameraArmNode.isHidden = false
         cameraWorldPosition = nil
         isSleeping = false
+        processRespawnsAfterSleep()
         onTimeOfDayChanged?(dayNight.timeOfDay)
         onSleepFinished?()
         completion?()
@@ -1553,6 +1824,32 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     }
 
     // MARK: - Proximity
+
+    private func checkHelperProximity() {
+        guard let playerNode else {
+            if wasNearHelper != nil {
+                wasNearHelper = nil
+                onNearHelperAnimal?(nil)
+            }
+            return
+        }
+        var nearest: AnimalNode?
+        var best = Float.greatestFiniteMagnitude
+        for animal in animals where animal.kind.canHelpCarryWater && !animal.isFollowingPlayer {
+            let dx = animal.position.x - playerNode.position.x
+            let dz = animal.position.z - playerNode.position.z
+            let d = dx * dx + dz * dz
+            let r = animal.interactionRadius
+            if d < r * r, d < best {
+                best = d
+                nearest = animal
+            }
+        }
+        if nearest?.animalID != wasNearHelper?.animalID {
+            wasNearHelper = nearest
+            onNearHelperAnimal?(nearest)
+        }
+    }
 
     private func checkProximity() {
         guard let playerPos = playerNode?.position else { return }

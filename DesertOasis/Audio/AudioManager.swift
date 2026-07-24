@@ -206,8 +206,8 @@ final class AudioManager: NSObject {
             try? await Task.sleep(for: .milliseconds(40))
             while !Task.isCancelled {
                 guard let self, self.isWalking, self.soundEnabled else { break }
-                self.play(.sandStep, volume: 0.55)
-                let interval = Double.random(in: 0.32...0.40)
+                self.play(.sandStep, volume: 0.22)
+                let interval = Double.random(in: 0.36...0.46)
                 try? await Task.sleep(for: .seconds(interval))
             }
             await MainActor.run { self?.footstepTask = nil }

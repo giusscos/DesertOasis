@@ -58,6 +58,127 @@ enum VoxelPropBuilder {
         return root
     }
 
+    /// Handheld / equipped lantern (no built-in light — caller adds SCNLight).
+    static func makeLantern() -> SCNNode {
+        let root = SCNNode()
+        root.name = "prop_lantern"
+        let s = VoxelSculpture(sizeX: 5, sizeY: 8, sizeZ: 5,
+                               origin: SIMD3<Float>(-2.5, 0, -2.5) * uf)
+        s.fillBox(x0: 1, y0: 0, z0: 1, x1: 3, y1: 1, z1: 3, type: .darkWood)
+        s.fillTube(c0: 2.5, c1: 2.5, a0: 1, a1: 5, outerR: 1.8, innerR: 1.1, type: .brass)
+        s.fillSphere(cx: 2.5, cy: 3.5, cz: 2.5, r: 1.1, type: .brass)
+        s.fillBox(x0: 1, y0: 5, z0: 1, x1: 3, y1: 6, z1: 3, type: .iron)
+        s.fillBox(x0: 2, y0: 6, z0: 2, x1: 2, y1: 7, z1: 2, type: .darkWood)
+        let mesh = s.makeNode(name: "lantern_body") { type in
+            if type == .brass { return UIColor(red: 1.0, green: 0.78, blue: 0.35, alpha: 1) }
+            return type.color
+        }
+        mesh.geometry?.firstMaterial?.emission.contents = UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 1)
+        mesh.geometry?.firstMaterial?.emission.intensity = 0.7
+        root.addChildNode(mesh)
+        return root
+    }
+
+    /// Animal watering trough beside the camp barrel.
+    static func waterTrough() -> SCNNode {
+        let root = SCNNode()
+        root.name = "prop_water_trough"
+        let s = VoxelSculpture(sizeX: 14, sizeY: 5, sizeZ: 7,
+                               origin: SIMD3<Float>(-7, 0, -3.5) * uf)
+        s.fillBox(x0: 0, y0: 0, z0: 0, x1: 13, y1: 1, z1: 6, type: .darkWood)
+        s.fillBox(x0: 0, y0: 1, z0: 0, x1: 13, y1: 3, z1: 1, type: .wood)
+        s.fillBox(x0: 0, y0: 1, z0: 5, x1: 13, y1: 3, z1: 6, type: .wood)
+        s.fillBox(x0: 0, y0: 1, z0: 1, x1: 1, y1: 3, z1: 5, type: .wood)
+        s.fillBox(x0: 12, y0: 1, z0: 1, x1: 13, y1: 3, z1: 5, type: .wood)
+        root.addChildNode(s.makeNode(name: "trough_body"))
+
+        let waterS = VoxelSculpture(sizeX: 11, sizeY: 1, sizeZ: 4,
+                                    origin: SIMD3<Float>(-5.5, 0, -2) * uf)
+        waterS.fillBox(x0: 0, y0: 0, z0: 0, x1: 10, y1: 0, z1: 3, type: .water)
+        let water = waterS.makeNode(name: "trough_water")
+        water.position.y = 0.12
+        water.isHidden = true
+        root.addChildNode(water)
+
+        let zone = SCNNode()
+        zone.name = "interact_zone"
+        zone.position = SCNVector3(0, 0.5, 0)
+        root.addChildNode(zone)
+        return root
+    }
+
+    /// Landmark accent beside a special oasis.
+    static func landmarkAccent(kind: LandmarkKind) -> SCNNode {
+        let root = SCNNode()
+        root.name = "landmark_\(kind.rawValue)"
+        switch kind {
+        case .shrine:
+            let s = VoxelSculpture(sizeX: 10, sizeY: 14, sizeZ: 10,
+                                   origin: SIMD3<Float>(-5, 0, -5) * uf)
+            s.fillCylinder(c0: 5, c1: 5, a0: 0, a1: 8, radius: 2.4, type: .sandstone)
+            s.fillBox(x0: 2, y0: 8, z0: 2, x1: 7, y1: 10, z1: 7, type: .sandstone)
+            s.fillSphere(cx: 5, cy: 11, cz: 5, r: 2.0, type: .brass)
+            root.addChildNode(s.makeNode(name: "shrine_mesh"))
+        case .mirrored:
+            let s = VoxelSculpture(sizeX: 8, sizeY: 4, sizeZ: 8,
+                                   origin: SIMD3<Float>(-4, 0, -4) * uf)
+            s.fillCylinder(c0: 4, c1: 4, a0: 0, a1: 1, radius: 3.5, type: .sandstone)
+            s.fillCylinder(c0: 4, c1: 4, a0: 1, a1: 2, radius: 2.8, type: .water)
+            root.addChildNode(s.makeNode(name: "mirror_rim"))
+        case .canyon:
+            let s = VoxelSculpture(sizeX: 12, sizeY: 16, sizeZ: 6,
+                                   origin: SIMD3<Float>(-6, 0, -3) * uf)
+            s.fillBox(x0: 0, y0: 0, z0: 0, x1: 3, y1: 14, z1: 5, type: .rock)
+            s.fillBox(x0: 8, y0: 0, z0: 0, x1: 11, y1: 12, z1: 5, type: .rock)
+            root.addChildNode(s.makeNode(name: "canyon_walls"))
+        }
+        return root
+    }
+
+    /// Merchant trade crate decoration.
+    static func merchantCrate() -> SCNNode {
+        let root = SCNNode()
+        root.name = "prop_trade_crate"
+        let s = VoxelSculpture(sizeX: 8, sizeY: 6, sizeZ: 8,
+                               origin: SIMD3<Float>(-4, 0, -4) * uf)
+        s.fillBox(x0: 0, y0: 0, z0: 0, x1: 7, y1: 5, z1: 7, type: .wood)
+        s.fillBox(x0: 0, y0: 2, z0: 0, x1: 7, y1: 2, z1: 7, type: .darkWood)
+        s.fillBox(x0: 3, y0: 5, z0: 3, x1: 4, y1: 5, z1: 4, type: .brass)
+        root.addChildNode(s.makeNode(name: "crate_mesh"))
+        return root
+    }
+
+    /// Small water vessel strapped to a helper animal.
+    static func animalWaterVessel(filled: Bool) -> SCNNode {
+        let root = SCNNode()
+        root.name = "animal_water_vessel"
+        let s = VoxelSculpture(sizeX: 5, sizeY: 5, sizeZ: 5,
+                               origin: SIMD3<Float>(-2.5, 0, -2.5) * uf)
+        s.fillTube(c0: 2.5, c1: 2.5, a0: 0, a1: 4, outerR: 2.0, innerR: 1.3, type: .wood)
+        root.addChildNode(s.makeNode(name: "vessel_body"))
+        if filled {
+            let w = VoxelSculpture(sizeX: 3, sizeY: 2, sizeZ: 3,
+                                   origin: SIMD3<Float>(-1.5, 0, -1.5) * uf)
+            w.fillCylinder(c0: 1.5, c1: 1.5, a0: 0, a1: 1, radius: 1.2, type: .water)
+            let fill = w.makeNode(name: "vessel_water")
+            fill.position.y = 0.08
+            root.addChildNode(fill)
+        }
+        return root
+    }
+
+    /// Decorative camp trinket (star-like ornament).
+    static func campTrinket() -> SCNNode {
+        let root = SCNNode()
+        root.name = "prop_camp_trinket"
+        let s = VoxelSculpture(sizeX: 5, sizeY: 8, sizeZ: 5,
+                               origin: SIMD3<Float>(-2.5, 0, -2.5) * uf)
+        s.fillCylinder(c0: 2.5, c1: 2.5, a0: 0, a1: 5, radius: 0.7, type: .darkWood)
+        s.fillSphere(cx: 2.5, cy: 6, cz: 2.5, r: 1.6, type: .brass)
+        root.addChildNode(s.makeNode(name: "trinket_mesh"))
+        return root
+    }
+
     // MARK: - Cactus
 
     static func saguaroCactus() -> SCNNode {

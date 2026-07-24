@@ -36,6 +36,9 @@ final class CampNode: SCNNode {
     private(set) var oasisGrowth: CampOasisGrowthNode!
     private(set) var playerTentNode: SCNNode?
     private var statsSign: CampStatsSignNode!
+    private(set) var troughNode: SCNNode?
+    private var trinketNode: SCNNode?
+    private var merchantCrateNode: SCNNode?
 
     /// Collision cylinders (meters) matching VoxelPropBuilder footprints.
     private let barrelCollisionRadius: Float = 0.52
@@ -70,9 +73,13 @@ final class CampNode: SCNNode {
             buildRemoteCamp(world: world)
         }
         buildBarrel()
+        buildTrough()
         buildCampfire()
         buildOasisGrowth()
         buildStatsSign()
+        if site.isHome {
+            buildMerchantCrate()
+        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -113,9 +120,37 @@ final class CampNode: SCNNode {
     }
 
     @discardableResult
-    func deliverWater() -> Float {
-        setFillLevel(fillLevel + Self.deliveryAmount)
+    func deliverWater(amount: Float = CampNode.deliveryAmount) -> Float {
+        setFillLevel(fillLevel + amount)
         return fillLevel
+    }
+
+    /// Extra pour from a helper animal (smaller than a full bucket).
+    @discardableResult
+    func deliverHelperWater() -> Float {
+        deliverWater(amount: 0.06)
+    }
+
+    func canDeliverAtTrough(at worldPosition: SCNVector3) -> Bool {
+        guard let trough = troughNode else { return false }
+        let local = convertPosition(worldPosition, from: nil)
+        let dx = local.x - trough.position.x
+        let dz = local.z - trough.position.z
+        return sqrt(dx * dx + dz * dz) < interactionRadius
+    }
+
+    func setCampTrinketVisible(_ visible: Bool) {
+        if visible {
+            if trinketNode == nil {
+                let t = VoxelPropBuilder.campTrinket()
+                t.position = SCNVector3(-0.6, 0, -1.2)
+                addChildNode(t)
+                trinketNode = t
+            }
+            trinketNode?.isHidden = false
+        } else {
+            trinketNode?.isHidden = true
+        }
     }
 
     @discardableResult
@@ -136,7 +171,7 @@ final class CampNode: SCNNode {
 
     /// Call each frame. When the barrel has water, NPCs slowly convert it into oasis growth.
     func updateIrrigation(deltaTime: Float, hasCampNPCs: Bool) {
-        guard hasCampNPCs, fillLevel >= minWaterToIrrigate, oasisGrowth.stage != .lush else { return }
+        guard hasCampNPCs, fillLevel >= minWaterToIrrigate, oasisGrowth.stage != .flourishing else { return }
         irrigateAccumulator += deltaTime
         guard irrigateAccumulator >= irrigateInterval else { return }
         irrigateAccumulator = 0
@@ -152,7 +187,7 @@ final class CampNode: SCNNode {
     func simulateIrrigation(seconds: Float, hasCampNPCs: Bool) {
         guard hasCampNPCs else { return }
         var remaining = seconds
-        while remaining > 0, fillLevel >= minWaterToIrrigate, oasisGrowth.stage != .lush {
+        while remaining > 0, fillLevel >= minWaterToIrrigate, oasisGrowth.stage != .flourishing {
             let step = min(irrigateInterval, remaining)
             remaining -= step
             irrigateAccumulator += step
@@ -414,6 +449,21 @@ final class CampNode: SCNNode {
         barrelNode.position = SCNVector3(3.6, 0, -2.2)
         waterSurface = barrelNode.childNode(withName: "water_surface", recursively: true)!
         addChildNode(barrelNode)
+    }
+
+    private func buildTrough() {
+        let trough = VoxelPropBuilder.waterTrough()
+        trough.position = SCNVector3(5.4, 0, -1.4)
+        trough.eulerAngles.y = -0.4
+        addChildNode(trough)
+        troughNode = trough
+    }
+
+    private func buildMerchantCrate() {
+        let crate = VoxelPropBuilder.merchantCrate()
+        crate.position = SCNVector3(-3.2, 0, -0.8)
+        addChildNode(crate)
+        merchantCrateNode = crate
     }
 
     private func buildCampfire() {

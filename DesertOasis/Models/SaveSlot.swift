@@ -24,6 +24,23 @@ struct SaveSlot: Codable, Identifiable {
     /// Mission tracking — persisted across sessions.
     var missions: [MissionRecord]
 
+    // Expansion fields
+    var equippedTool: String
+    var hasLantern: Bool
+    var tradeBeads: Int
+    var trinkets: [String]
+    var achievements: [String]
+    var diaryPages: [String]
+    var helpedWanderers: Int
+    var helpedLost: Int
+    var helperAnimalKind: String?
+    var isHelperCarryingWater: Bool
+    var sleepsCompleted: Int
+    var pendingWildNPCRespawns: [PendingNPCRespawn]
+    var discoveredLandmarks: [String]
+    var hasCampTrinket: Bool
+    var mapScrapsOwned: Int
+
     var isEmpty: Bool { characterGender == nil }
 
     var displayName: String {
@@ -51,6 +68,21 @@ struct SaveSlot: Codable, Identifiable {
         timeOfDay = 0.32
         campProgress = [CampProgress.home(from: 0)]
         missions = []
+        equippedTool = EquippableTool.bucket.rawValue
+        hasLantern = false
+        tradeBeads = 0
+        trinkets = []
+        achievements = []
+        diaryPages = []
+        helpedWanderers = 0
+        helpedLost = 0
+        helperAnimalKind = nil
+        isHelperCarryingWater = false
+        sleepsCompleted = 0
+        pendingWildNPCRespawns = []
+        discoveredLandmarks = []
+        hasCampTrinket = false
+        mapScrapsOwned = 0
     }
 
     static func timestampName(from date: Date) -> String {
@@ -106,6 +138,11 @@ struct SaveSlot: Codable, Identifiable {
         case hasWaterCompass, hasWaterDetector
         case desertSeed, playerPositionX, playerPositionZ
         case timeOfDay, campProgress, missions
+        case equippedTool, hasLantern, tradeBeads, trinkets
+        case achievements, diaryPages, helpedWanderers, helpedLost
+        case helperAnimalKind, isHelperCarryingWater, sleepsCompleted
+        case pendingWildNPCRespawns, discoveredLandmarks
+        case hasCampTrinket, mapScrapsOwned
     }
 
     init(from decoder: Decoder) throws {
@@ -133,5 +170,29 @@ struct SaveSlot: Codable, Identifiable {
             campProgress.insert(CampProgress.home(from: campWaterLevel), at: 0)
         }
         missions = try c.decodeIfPresent([MissionRecord].self, forKey: .missions) ?? []
+        equippedTool = try c.decodeIfPresent(String.self, forKey: .equippedTool)
+            ?? EquippableTool.bucket.rawValue
+        hasLantern = try c.decodeIfPresent(Bool.self, forKey: .hasLantern) ?? false
+        tradeBeads = try c.decodeIfPresent(Int.self, forKey: .tradeBeads) ?? 0
+        trinkets = try c.decodeIfPresent([String].self, forKey: .trinkets) ?? []
+        achievements = try c.decodeIfPresent([String].self, forKey: .achievements) ?? []
+        diaryPages = try c.decodeIfPresent([String].self, forKey: .diaryPages) ?? []
+        helpedWanderers = try c.decodeIfPresent(Int.self, forKey: .helpedWanderers) ?? 0
+        helpedLost = try c.decodeIfPresent(Int.self, forKey: .helpedLost) ?? 0
+        helperAnimalKind = try c.decodeIfPresent(String.self, forKey: .helperAnimalKind)
+        isHelperCarryingWater = try c.decodeIfPresent(Bool.self, forKey: .isHelperCarryingWater) ?? false
+        sleepsCompleted = try c.decodeIfPresent(Int.self, forKey: .sleepsCompleted) ?? 0
+        pendingWildNPCRespawns = try c.decodeIfPresent([PendingNPCRespawn].self, forKey: .pendingWildNPCRespawns) ?? []
+        discoveredLandmarks = try c.decodeIfPresent([String].self, forKey: .discoveredLandmarks) ?? []
+        hasCampTrinket = try c.decodeIfPresent(Bool.self, forKey: .hasCampTrinket) ?? false
+        mapScrapsOwned = try c.decodeIfPresent(Int.self, forKey: .mapScrapsOwned) ?? 0
     }
+}
+
+/// Wild NPC scheduled to return after the player sleeps.
+struct PendingNPCRespawn: Codable, Equatable {
+    var personality: String
+    /// Sleeps remaining before respawn (decremented each morning).
+    var sleepsRemaining: Int
+    var helpCount: Int
 }

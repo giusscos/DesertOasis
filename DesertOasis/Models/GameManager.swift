@@ -87,7 +87,23 @@ final class GameManager {
         posZ: Float? = nil,
         timeOfDay: Float? = nil,
         campProgress: CampProgress? = nil,
-        missions: [MissionRecord]? = nil
+        missions: [MissionRecord]? = nil,
+        equippedTool: String? = nil,
+        hasLantern: Bool? = nil,
+        tradeBeads: Int? = nil,
+        trinkets: [String]? = nil,
+        achievements: [String]? = nil,
+        diaryPages: [String]? = nil,
+        helpedWanderers: Int? = nil,
+        helpedLost: Int? = nil,
+        helperAnimalKind: String?? = nil,
+        clearHelperAnimal: Bool = false,
+        isHelperCarryingWater: Bool? = nil,
+        sleepsCompleted: Int? = nil,
+        pendingWildNPCRespawns: [PendingNPCRespawn]? = nil,
+        discoveredLandmarks: [String]? = nil,
+        hasCampTrinket: Bool? = nil,
+        mapScrapsOwned: Int? = nil
     ) {
         if let w = waterFound       { saveSlots[slotIndex].waterFound       = w }
         if let o = oasisFound       { saveSlots[slotIndex].oasisFound       = o }
@@ -107,6 +123,25 @@ final class GameManager {
         if let tod = timeOfDay      { saveSlots[slotIndex].timeOfDay        = tod }
         if let cp = campProgress    { saveSlots[slotIndex].upsertCampProgress(cp) }
         if let m = missions         { saveSlots[slotIndex].missions = m }
+        if let et = equippedTool    { saveSlots[slotIndex].equippedTool = et }
+        if let hl = hasLantern      { saveSlots[slotIndex].hasLantern = hl }
+        if let tb = tradeBeads      { saveSlots[slotIndex].tradeBeads = tb }
+        if let tr = trinkets        { saveSlots[slotIndex].trinkets = tr }
+        if let ach = achievements   { saveSlots[slotIndex].achievements = ach }
+        if let dp = diaryPages      { saveSlots[slotIndex].diaryPages = dp }
+        if let hw = helpedWanderers { saveSlots[slotIndex].helpedWanderers = hw }
+        if let hlost = helpedLost   { saveSlots[slotIndex].helpedLost = hlost }
+        if clearHelperAnimal {
+            saveSlots[slotIndex].helperAnimalKind = nil
+        } else if let wrapped = helperAnimalKind {
+            saveSlots[slotIndex].helperAnimalKind = wrapped
+        }
+        if let hc = isHelperCarryingWater { saveSlots[slotIndex].isHelperCarryingWater = hc }
+        if let sc = sleepsCompleted { saveSlots[slotIndex].sleepsCompleted = sc }
+        if let pr = pendingWildNPCRespawns { saveSlots[slotIndex].pendingWildNPCRespawns = pr }
+        if let dl = discoveredLandmarks { saveSlots[slotIndex].discoveredLandmarks = dl }
+        if let ct = hasCampTrinket  { saveSlots[slotIndex].hasCampTrinket = ct }
+        if let ms = mapScrapsOwned  { saveSlots[slotIndex].mapScrapsOwned = ms }
         saveSlots[slotIndex].lastUpdated = Date()
         persistSlots()
     }

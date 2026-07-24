@@ -46,8 +46,8 @@ final class CampStatsSignNode: SCNNode {
         applyText(titleNode, string: title, color: carvedInk, scale: titleScale, maxWidth: maxW)
         applyText(waterNode, string: "Water  \(Int((w * 100).rounded()))%", color: waterInk(for: w), scale: bodyScale, maxWidth: maxW)
         applyText(oasisNode, string: stage.displayName, color: oasisInk, scale: bodyScale, maxWidth: maxW)
-        let bar = progressBar(for: stage == .lush ? 1 : p)
-        let suffix = stage == .lush ? "done" : "\(Int((p * 100).rounded()))%"
+        let bar = progressBar(for: stage == .flourishing ? 1 : p)
+        let suffix = stage == .flourishing ? "done" : "\(Int((p * 100).rounded()))%"
         applyText(progressNode, string: "\(bar) \(suffix)", color: carvedInk, scale: bodyScale, maxWidth: maxW)
     }
 

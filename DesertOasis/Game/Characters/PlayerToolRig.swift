@@ -7,14 +7,17 @@ final class PlayerToolRig: SCNNode {
     private(set) var bucketNode: SCNNode!
     private var bucketWater: SCNNode!
     private(set) var compassNode: SCNNode!
-    private var compassNeedle: SCNNode!
     private(set) var detectorNode: SCNNode!
     private var detectorGauge: SCNNode!
     private var detectorLamp: SCNNode!
+    private(set) var lanternNode: SCNNode!
+    private var lanternLight: SCNLight!
 
     private(set) var isCarryingWater = false
     private(set) var hasCompass = false
     private(set) var hasDetector = false
+    private(set) var hasLantern = false
+    private(set) var equipped: EquippableTool = .bucket
 
     private static var uf: Float { VoxelMetrics.unit }
 
@@ -24,9 +27,12 @@ final class PlayerToolRig: SCNNode {
         buildBucket()
         buildCompass()
         buildDetector()
+        buildLantern()
         setCarryingWater(false)
         setCompassUnlocked(false)
         setDetectorUnlocked(false)
+        setLanternUnlocked(false)
+        setEquipped(.bucket)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -44,23 +50,42 @@ final class PlayerToolRig: SCNNode {
 
     func setCompassUnlocked(_ unlocked: Bool) {
         hasCompass = unlocked
-        compassNode.isHidden = !unlocked
+        refreshEquipVisibility()
     }
 
     func setDetectorUnlocked(_ unlocked: Bool) {
         hasDetector = unlocked
-        detectorNode.isHidden = !unlocked
+        refreshEquipVisibility()
     }
 
-    func updateCompass(playerYaw: Float, directionXZ: SIMD2<Float>) {
-        guard hasCompass, simd_length(directionXZ) > 0.001 else { return }
-        let worldBearing = atan2(directionXZ.x, directionXZ.y)
-        compassNeedle.eulerAngles.y = worldBearing - playerYaw
+    func setLanternUnlocked(_ unlocked: Bool) {
+        hasLantern = unlocked
+        refreshEquipVisibility()
     }
 
-    func updateDetector(signal: Float, time: Float) {
-        guard hasDetector else { return }
-        let s = max(0, min(1, signal))
+    func setEquipped(_ tool: EquippableTool) {
+        equipped = tool
+        refreshEquipVisibility()
+    }
+
+    private func refreshEquipVisibility() {
+        // Bucket always on the back when present
+        bucketNode.isHidden = false
+
+        // Compass is HUD-only (north orientation); never show a body prop.
+        compassNode.isHidden = true
+
+        let showDetector = hasDetector && equipped == .detector
+        let showLantern = hasLantern && equipped == .lantern
+
+        detectorNode.isHidden = !showDetector
+        lanternNode.isHidden = !showLantern
+        lanternLight.intensity = showLantern ? 280 : 0
+    }
+
+    func updateDetector(signal: Float, time: Float, clarity: Float = 1) {
+        guard hasDetector, equipped == .detector else { return }
+        let s = max(0, min(1, signal * clarity))
         detectorGauge.eulerAngles.z = s * (Float.pi / 2)
         let pulse = 0.25 + s * (0.55 + 0.2 * sin(time * (4 + s * 10)))
         detectorLamp.geometry?.firstMaterial?.emission.intensity = CGFloat(pulse)
@@ -144,7 +169,7 @@ final class PlayerToolRig: SCNNode {
         dial.position.y = 0.04
         compassNode.addChildNode(dial)
 
-        compassNeedle = SCNNode()
+        let compassNeedle = SCNNode()
         compassNeedle.name = "needle"
         let needleS = VoxelSculpture(sizeX: 1, sizeY: 1, sizeZ: 4,
                                      origin: SIMD3<Float>(-0.5, 0, 0) * u)
@@ -205,5 +230,27 @@ final class PlayerToolRig: SCNNode {
         detectorNode.addChildNode(detectorLamp)
 
         addChildNode(detectorNode)
+    }
+
+    private func buildLantern() {
+        lanternNode = VoxelPropBuilder.makeLantern()
+        lanternNode.position = SCNVector3(0.38, 0.88, 0.22)
+        lanternNode.eulerAngles.x = 0.15
+
+        let light = SCNLight()
+        light.type = .omni
+        light.color = UIColor(red: 1.0, green: 0.82, blue: 0.45, alpha: 1)
+        light.intensity = 0
+        light.attenuationStartDistance = 1
+        light.attenuationEndDistance = 14
+        light.castsShadow = false
+        let lightNode = SCNNode()
+        lightNode.name = "lantern_light"
+        lightNode.light = light
+        lightNode.position = SCNVector3(0, 0.22, 0)
+        lanternNode.addChildNode(lightNode)
+        lanternLight = light
+
+        addChildNode(lanternNode)
     }
 }

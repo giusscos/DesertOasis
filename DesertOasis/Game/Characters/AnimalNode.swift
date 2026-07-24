@@ -69,8 +69,13 @@ enum AnimalKind: String, CaseIterable {
         }
     }
 
-    /// Reserved for a later water-help loop (carry assist / trough).
-    var canHelpCarryWater: Bool { false }
+    /// Camel and goat can haul an extra water vessel.
+    var canHelpCarryWater: Bool {
+        switch self {
+        case .camel, .goat: true
+        default: false
+        }
+    }
 }
 
 // MARK: - AnimalNode
@@ -91,6 +96,12 @@ final class AnimalNode: SCNNode {
     private var isReacting = false
     private var groundY: ((Float, Float) -> Float)?
     private var isBlocked: ((Float, Float) -> Bool)?
+
+    /// Following the player as a water helper.
+    private(set) var isFollowingPlayer = false
+    private(set) var isCarryingWater = false
+    private weak var followTarget: SCNNode?
+    private var vesselNode: SCNNode?
 
     init(kind: AnimalKind, position worldPosition: SCNVector3) {
         self.kind = kind
@@ -119,6 +130,37 @@ final class AnimalNode: SCNNode {
         self.isBlocked = isBlocked
         homeX = position.x
         homeZ = position.z
+    }
+
+    func beginHelping(player: SCNNode, carryingWater: Bool) {
+        guard kind.canHelpCarryWater else { return }
+        isFollowingPlayer = true
+        followTarget = player
+        setCarryingWater(carryingWater)
+        targetX = nil
+        targetZ = nil
+    }
+
+    func stopHelping() {
+        isFollowingPlayer = false
+        followTarget = nil
+        setCarryingWater(false)
+        homeX = position.x
+        homeZ = position.z
+        waitTimer = 1.5
+    }
+
+    func setCarryingWater(_ carrying: Bool) {
+        isCarryingWater = carrying
+        vesselNode?.removeFromParentNode()
+        vesselNode = nil
+        guard carrying else { return }
+        let vessel = VoxelPropBuilder.animalWaterVessel(filled: true)
+        let y: Float = kind == .camel ? 1.35 : 0.85
+        vessel.position = SCNVector3(0.15, y, -0.15)
+        vessel.scale = SCNVector3(0.85, 0.85, 0.85)
+        addChildNode(vessel)
+        vesselNode = vessel
     }
 
     // MARK: - Physics
@@ -151,10 +193,15 @@ final class AnimalNode: SCNNode {
         }
     }
 
-    // MARK: - Wander
+    // MARK: - Wander / follow
 
     func updateWander(deltaTime: Float) {
         guard !isReacting, let groundY, let isBlocked else { return }
+
+        if isFollowingPlayer, let target = followTarget {
+            updateFollow(deltaTime: deltaTime, target: target, groundY: groundY, isBlocked: isBlocked)
+            return
+        }
 
         if let tx = targetX, let tz = targetZ {
             let dx = tx - position.x
@@ -181,7 +228,6 @@ final class AnimalNode: SCNNode {
 
             eulerAngles.y = atan2(dx, dz)
             let gy = groundY(nx, nz)
-            // Birds hop slightly off the sand while moving.
             let lift: Float = (kind == .bird && isWalking) ? 0.08 : 0
             position = SCNVector3(nx, gy + lift, nz)
             setWalking(true)
@@ -198,6 +244,33 @@ final class AnimalNode: SCNNode {
         }
 
         pickNewTarget(isBlocked: isBlocked)
+    }
+
+    private func updateFollow(deltaTime: Float,
+                              target: SCNNode,
+                              groundY: (Float, Float) -> Float,
+                              isBlocked: (Float, Float) -> Bool) {
+        let dx = target.position.x - position.x
+        let dz = target.position.z - position.z
+        let dist = sqrt(dx * dx + dz * dz)
+        let followDist: Float = kind == .camel ? 3.2 : 2.6
+        if dist < followDist {
+            setWalking(false)
+            return
+        }
+        let speed = kind.walkSpeed * 1.25 * deltaTime
+        let step = min(speed, dist - followDist + 0.1)
+        let nx = position.x + (dx / dist) * step
+        let nz = position.z + (dz / dist) * step
+        if !isBlocked(nx, nz) {
+            position.x = nx
+            position.z = nz
+            position.y = groundY(nx, nz)
+            eulerAngles.y = atan2(dx, dz)
+            setWalking(true)
+        } else {
+            setWalking(false)
+        }
     }
 
     private func pickNewTarget(isBlocked: (Float, Float) -> Bool) {

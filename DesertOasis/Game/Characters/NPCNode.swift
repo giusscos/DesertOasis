@@ -13,6 +13,9 @@ struct CampSituation {
     var playerName: String?
     var oasisStageName: String = "barren sand"
     var oasisProgress: Float = 0
+    var tradeBeads: Int = 0
+    var helpCount: Int = 0
+    var hasLantern: Bool = false
 
     var waterLabel: String {
         switch campWaterLevel {
@@ -30,12 +33,17 @@ struct CampSituation {
             "Water deliveries so far: \(waterDeliveries).",
             "Oases the player has found: \(oasisFound).",
             "Camp oasis growth: \(oasisStageName) (\(Int(oasisProgress * 100))% toward the next stage). NPCs slowly use barrel water to irrigate and grow the oasis.",
+            "Trade beads the player carries: \(tradeBeads).",
         ]
         if isCarryingWater {
             lines.append("The player is currently carrying a full water bucket.")
         }
         if hasCompass { lines.append("The player has a water compass.") }
         if hasDetector { lines.append("The player has a water detector.") }
+        if hasLantern { lines.append("The player owns a lantern.") }
+        if helpCount > 0 {
+            lines.append("This traveller has been helped by the player \(helpCount) time(s) before.")
+        }
         if let name = playerName, !name.isEmpty {
             lines.append("The player's name is \(name).")
         }
@@ -119,7 +127,12 @@ enum NPCPersonality: CaseIterable {
         let variants: [String]
         switch self {
         case .wanderer:
-            if carrying {
+            if situation.helpCount > 0 {
+                variants = [
+                    "You again — the dunes remember kindness. Water, if you have it?",
+                    "Friend of the trail! My throat is dry once more…",
+                ]
+            } else if carrying {
                 variants = [
                     "Is that water? Please—share a drop with a traveller!",
                     "A full bucket… my throat sings just looking at it.",
@@ -140,6 +153,11 @@ enum NPCPersonality: CaseIterable {
                 variants = [
                     "Ha! A full bucket means good business. Pour it in and I'll talk oasis tips.",
                     "Water on your back—deliver it and we'll trade news.",
+                ]
+            } else if situation.tradeBeads > 0 {
+                variants = [
+                    "I see beads! Fancy a lantern, a map scrap, or a camp trinket?",
+                    "Trade's open — beads for goods. Ask me about the shop.",
                 ]
             } else if low {
                 variants = [
@@ -207,7 +225,12 @@ enum NPCPersonality: CaseIterable {
                 ]
             }
         case .lost:
-            if situation.hasCompass || situation.hasDetector {
+            if situation.helpCount > 0 {
+                variants = [
+                    "It's you again — I wandered off course once more. Water?",
+                    "The dunes spun me around again. You saved me before…",
+                ]
+            } else if situation.hasCompass || situation.hasDetector {
                 variants = [
                     "You have tools I lack! Which way is camp—or water?",
                     "Please—point me somewhere wet. I'm turned around completely.",
@@ -326,6 +349,8 @@ final class NPCNode: SCNNode {
     var task: NPCTask
     let npcID = UUID()
     let interactionRadius: Float = 4.0
+    /// Times this traveller has been helped (persisted via pending respawn).
+    var helpCount: Int = 0
 
     private var characterNode: SCNNode!
     private var indicatorNode: SCNNode!

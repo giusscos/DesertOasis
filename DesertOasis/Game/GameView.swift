@@ -31,12 +31,24 @@ struct GameView: View {
     @State private var pressedKeys: Set<GameKey> = []
     @State private var runSources: Set<RunSource> = []
     @State private var missionManager = MissionManager()
+    @State private var achievementManager = AchievementManager()
     @State private var isShowingMissions = false
     @State private var isShowingIntro = false
     @State private var pendingMissionOffer: MissionDefinition? = nil
     @State private var deniedMissionOffers: Set<String> = []
     @State private var worldReady = false
     @State private var callbacksWired = false
+    @State private var equippedTool: EquippableTool = .bucket
+    @State private var isShowingToolPicker = false
+    @State private var isShowingTrade = false
+    @State private var isShowingDiary = false
+    @State private var isShowingAchievements = false
+    @State private var diaryRevealID: String? = nil
+    @State private var nearHelperAnimal: AnimalNode? = nil
+    @State private var tradeBeads: Int = 0
+    @State private var stormActive = false
+    @State private var compassHUDAngle: Float? = nil
+    @State private var detectorHUDSignal: Float? = nil
 
     private enum GameKey: Hashable {
         case moveForward, moveBack, moveLeft, moveRight
@@ -48,7 +60,9 @@ struct GameView: View {
 
     /// Playing with hidden, confined cursor.
     private var isPointerLockedGameplay: Bool {
-        !isLoadingWorld && !isSleeping && !isPaused && !isShowingSettings && !isShowingMissions && !isShowingIntro && !dialogueManager.isVisible
+        !isLoadingWorld && !isSleeping && !isPaused && !isShowingSettings && !isShowingMissions
+            && !isShowingIntro && !dialogueManager.isVisible && !isShowingToolPicker
+            && !isShowingTrade && !isShowingDiary && !isShowingAchievements
     }
 
     /// Keyboard capture (includes pause so Esc can resume).
@@ -66,7 +80,7 @@ struct GameView: View {
     }
 
     private enum ActionKind {
-        case giveWater(NPCNode), deliver, collect, sleep
+        case giveWater(NPCNode), deliver, collect, sleep, loadHelper(AnimalNode), openTrade
 
         var icon: String {
             switch self {
@@ -74,6 +88,8 @@ struct GameView: View {
             case .deliver:   "drop.fill"
             case .collect:   "drop"
             case .sleep:     "moon.zzz.fill"
+            case .loadHelper: "pawprint.fill"
+            case .openTrade: "cart.fill"
             }
         }
         var label: String {
@@ -82,6 +98,8 @@ struct GameView: View {
             case .deliver:   "Deliver"
             case .collect:   "Collect"
             case .sleep:     "Sleep"
+            case .loadHelper: "Load"
+            case .openTrade: "Trade"
             }
         }
         var tint: Color {
@@ -90,17 +108,26 @@ struct GameView: View {
             case .deliver:   Color(red: 0.15, green: 0.50, blue: 0.80)
             case .collect:   Color(red: 0.10, green: 0.55, blue: 0.35)
             case .sleep:     Color(red: 0.28, green: 0.32, blue: 0.62)
+            case .loadHelper: Color(red: 0.55, green: 0.40, blue: 0.20)
+            case .openTrade: Color(red: 0.70, green: 0.45, blue: 0.15)
             }
         }
     }
 
     private var currentAction: ActionKind? {
+        if dialogueManager.isVisible,
+           dialogueManager.activeNPC?.personality == .merchant {
+            return .openTrade
+        }
         if dialogueManager.isVisible, carryingWater,
            let npc = dialogueManager.activeNPC,
            npc.personality.canReceiveWater, !npc.task.isCompleted {
             return .giveWater(npc)
         }
         if isNearBarrel { return .deliver }
+        if let animal = nearHelperAnimal, carryingWater, !animal.isFollowingPlayer {
+            return .loadHelper(animal)
+        }
         if isNearWater && !carryingWater { return .collect }
         if isNearBed && !carryingWater && canSleepNow { return .sleep }
         return nil
@@ -153,6 +180,14 @@ struct GameView: View {
             if isPaused, !isLoadingWorld, !isSleeping {
                 PauseOverlay(
                     onResume: { setPaused(false) },
+                    onDiary: {
+                        setPaused(false)
+                        isShowingDiary = true
+                    },
+                    onAchievements: {
+                        setPaused(false)
+                        isShowingAchievements = true
+                    },
                     onExitToCamp: {
                         setPaused(false)
                         gameManager.currentScreen = .slotSelection
@@ -183,6 +218,47 @@ struct GameView: View {
                 )
                 .transition(.opacity)
                 .zIndex(12)
+            }
+
+            if isShowingToolPicker {
+                ToolPickerOverlay(
+                    unlocked: EquippableTool.unlocked(in: slot),
+                    equipped: equippedTool,
+                    onSelect: { selectTool($0) },
+                    onClose: { isShowingToolPicker = false }
+                )
+                .zIndex(13)
+            }
+
+            if isShowingTrade {
+                TradeOverlayView(
+                    beads: tradeBeads,
+                    hasLantern: slot.hasLantern,
+                    hasCampTrinket: slot.hasCampTrinket,
+                    onBuy: { buyTradeGood($0) },
+                    onClose: { isShowingTrade = false }
+                )
+                .zIndex(13)
+            }
+
+            if isShowingDiary {
+                DiaryOverlayView(
+                    pageIDs: slot.diaryPages,
+                    revealID: diaryRevealID,
+                    onClose: {
+                        isShowingDiary = false
+                        diaryRevealID = nil
+                    }
+                )
+                .zIndex(13)
+            }
+
+            if isShowingAchievements {
+                AchievementsOverlayView(
+                    manager: achievementManager,
+                    onClose: { isShowingAchievements = false }
+                )
+                .zIndex(13)
             }
 
             // NPC mission offer card — floats above dialogue when an NPC proposes a mission
@@ -274,7 +350,9 @@ struct GameView: View {
             }
 
             // HUD (hidden while chatting / loading / sleeping / paused / settings / missions / intro)
-            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused, !isShowingSettings, !isShowingMissions, !isShowingIntro {
+            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused, !isShowingSettings,
+               !isShowingMissions, !isShowingIntro, !isShowingToolPicker, !isShowingTrade,
+               !isShowingDiary, !isShowingAchievements {
                 VStack(spacing: 0) {
                     topInfoBar
                         .padding(.horizontal, 12)
@@ -294,31 +372,46 @@ struct GameView: View {
 
                         Spacer()
 
-                        VStack(spacing: 14) {
+                        VStack(alignment: .trailing, spacing: 14) {
                             if let action = currentAction {
                                 contextActionButton(for: action)
                                     .transition(.scale.combined(with: .opacity))
                             }
 
-                            HoldActionButton(
-                                systemName: "figure.run",
-                                keyLabel: showsOnScreenJoystick ? nil : "⇧",
-                                isActive: isRunningHeld,
-                                activeColor: Color(red: 0.95, green: 0.55, blue: 0.15)
-                            ) { held in
-                                if held {
-                                    runSources.insert(.touch)
-                                } else {
-                                    runSources.remove(.touch)
-                                }
-                                syncRunning()
-                            }
+                            // Tool sits left of run/jump, vertically centered between them.
+                            HStack(alignment: .center, spacing: 14) {
+                                ToolActionButton(
+                                    tool: equippedTool,
+                                    showsKeyCaption: !showsOnScreenJoystick,
+                                    onTap: { cycleTool() },
+                                    onLongPress: {
+                                        AudioManager.shared.play(.uiTap)
+                                        isShowingToolPicker = true
+                                    }
+                                )
 
-                            TapActionButton(
-                                systemName: "arrow.up",
-                                keyLabel: showsOnScreenJoystick ? nil : "Space"
-                            ) {
-                                desertScene.jump()
+                                VStack(spacing: 14) {
+                                    HoldActionButton(
+                                        systemName: "figure.run",
+                                        keyLabel: showsOnScreenJoystick ? nil : "⇧",
+                                        isActive: isRunningHeld,
+                                        activeColor: Color(red: 0.95, green: 0.55, blue: 0.15)
+                                    ) { held in
+                                        if held {
+                                            runSources.insert(.touch)
+                                        } else {
+                                            runSources.remove(.touch)
+                                        }
+                                        syncRunning()
+                                    }
+
+                                    TapActionButton(
+                                        systemName: "arrow.up",
+                                        keyLabel: showsOnScreenJoystick ? nil : "Space"
+                                    ) {
+                                        desertScene.jump()
+                                    }
+                                }
                             }
                         }
                         .animation(.spring(duration: 0.3), value: currentAction != nil)
@@ -372,6 +465,9 @@ struct GameView: View {
             carryingWater = slot.isCarryingWater
             campWaterLevel = slot.campWaterLevel
             timeOfDay = slot.timeOfDay
+            tradeBeads = slot.tradeBeads
+            equippedTool = EquippableTool.resolved(slot.equippedTool, slot: slot)
+            achievementManager.load(from: slot.achievements)
             let home = slot.progress(forCampId: "home")
             oasisStage = OasisGrowthStage(rawValue: home.oasisStage) ?? .barren
             oasisProgress = home.oasisProgress
@@ -386,6 +482,7 @@ struct GameView: View {
             if slot.oasisFound > 0 {
                 missionManager.complete("glimmer_in_dust")
                 missionManager.unlock("oasis_remembers")
+                missionManager.unlock("ancient_spring")
             }
             if slot.campProgress.count > 1 {
                 missionManager.unlock("beyond_horizon")
@@ -541,6 +638,14 @@ struct GameView: View {
                     setShowingSettings(false)
                 } else if isShowingMissions {
                     setShowingMissions(false)
+                } else if isShowingToolPicker {
+                    isShowingToolPicker = false
+                } else if isShowingTrade {
+                    isShowingTrade = false
+                } else if isShowingDiary {
+                    isShowingDiary = false
+                } else if isShowingAchievements {
+                    isShowingAchievements = false
                 } else {
                     setPaused(!isPaused)
                 }
@@ -580,75 +685,105 @@ struct GameView: View {
                 performAction(action)
             }
 
+        case .toolCycle:
+            if isDown { cycleTool() }
+
         case .escape:
             break
         }
     }
 
     private var topInfoBar: some View {
-        HStack(spacing: 8) {
-            Button {
-                setShowingSettings(true)
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(.black.opacity(0.4), in: Circle())
-            }
-
-            Button {
-                missionManager.markAllSeen()
-                saveMissions()
-                setShowingMissions(true)
-            } label: {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "list.bullet.clipboard.fill")
+        // Status badges live in their own row so compass/detector never change their layout.
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                Button {
+                    setShowingSettings(true)
+                } label: {
+                    Image(systemName: "gearshape.fill")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 40, height: 40)
                         .background(.black.opacity(0.4), in: Circle())
+                }
+                .buttonStyle(.plain)
 
-                    if missionManager.hasNewMissions {
-                        Image(systemName: "exclamationmark")
-                            .font(.system(size: 9, weight: .black))
-                            .foregroundStyle(.black)
-                            .frame(width: 15, height: 15)
-                            .background(Color(red: 1.0, green: 0.85, blue: 0.15), in: Circle())
-                            .offset(x: 4, y: -4)
+                Button {
+                    missionManager.markAllSeen()
+                    saveMissions()
+                    setShowingMissions(true)
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "list.bullet.clipboard.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(.black.opacity(0.4), in: Circle())
+
+                        if missionManager.hasNewMissions {
+                            Image(systemName: "exclamationmark")
+                                .font(.system(size: 9, weight: .black))
+                                .foregroundStyle(.black)
+                                .frame(width: 15, height: 15)
+                                .background(Color(red: 1.0, green: 0.85, blue: 0.15), in: Circle())
+                                .offset(x: 4, y: -4)
+                        }
                     }
                 }
+                .buttonStyle(.plain)
+                .animation(.spring(duration: 0.3), value: missionManager.hasNewMissions)
+
+                dayNightBadge
+
+                if carryingWater {
+                    Label("Bucket", systemImage: "drop.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.55), in: Capsule())
+                }
+
+                if tradeBeads > 0 {
+                    Label("\(tradeBeads)", systemImage: "circle.hexagongrid.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(.black.opacity(0.45), in: Capsule())
+                }
+
+                if stormActive {
+                    Label("Storm", systemImage: "wind")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(Color.orange.opacity(0.55), in: Capsule())
+                }
+
+                Spacer(minLength: 4)
+
+                HStack(spacing: 6) {
+                    statBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
+                    statBadge(icon: "checkmark.circle.fill", value: slot.waterDeliveries, color: .green)
+                }
             }
-            .buttonStyle(.plain)
-            .animation(.spring(duration: 0.3), value: missionManager.hasNewMissions)
 
-            dayNightBadge
-
-            if carryingWater {
-                Label("Bucket", systemImage: "drop.fill")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(Color.blue.opacity(0.55), in: Capsule())
-            }
-
-            if slot.hasWaterCompass {
-                Image(systemName: "location.north.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.yellow)
-            }
-            if slot.hasWaterDetector {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.orange)
-            }
-
-            Spacer(minLength: 4)
-
-            HStack(spacing: 6) {
-                statBadge(icon: "sun.max.fill", value: slot.oasisFound, color: .orange)
-                statBadge(icon: "checkmark.circle.fill", value: slot.waterDeliveries, color: .green)
+            if compassHUDAngle != nil || detectorHUDSignal != nil {
+                HStack(spacing: 8) {
+                    if let angle = compassHUDAngle {
+                        CompassHUDView(angle: angle, stormJittering: stormActive)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                    if let signal = detectorHUDSignal {
+                        DetectorHUDView(signal: signal)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .animation(.spring(duration: 0.35), value: compassHUDAngle != nil)
+                .animation(.spring(duration: 0.35), value: detectorHUDSignal != nil)
             }
         }
         .padding(.horizontal, 4)
@@ -701,8 +836,23 @@ struct GameView: View {
                 gameManager.updateProgress(slotIndex: slotIndex, oasisFound: found)
                 missionManager.complete("glimmer_in_dust")
                 missionManager.unlock("oasis_remembers")
+                missionManager.unlock("ancient_spring")
                 saveMissions()
-                showToast("Oasis found! (\(found))")
+                unlockAchievement("first_oasis")
+                if let landmark = oasis.landmark {
+                    var discovered = slot.discoveredLandmarks
+                    if !discovered.contains(landmark.rawValue) {
+                        discovered.append(landmark.rawValue)
+                        gameManager.updateProgress(slotIndex: slotIndex, discoveredLandmarks: discovered)
+                        unlockAchievement("landmark_found")
+                        unlockDiaryPage(landmark.diaryPageID)
+                        missionManager.complete("ancient_spring")
+                        saveMissions()
+                    }
+                    showToast(landmark.discoveryToast)
+                } else {
+                    showToast("Oasis found! (\(found))")
+                }
             }
         }
 
@@ -719,7 +869,7 @@ struct GameView: View {
             showToast("Bucket filled — bring it to camp!")
         }
 
-        desertScene.onWaterDelivered = { level, unlockedCompass, unlockedDetector, campId in
+        desertScene.onWaterDelivered = { level, unlockedCompass, unlockedDetector, campId, helperBonus in
             carryingWater = false
             isNearBarrel = false
             AudioManager.shared.play(.deliver)
@@ -728,6 +878,8 @@ struct GameView: View {
             }
 
             let deliveries = slot.waterDeliveries + 1
+            let beads = tradeBeads + 1 + (helperBonus ? 1 : 0)
+            tradeBeads = beads
             let stage = desertScene.camps.first { $0.site.id == campId }?.oasisStage ?? oasisStage
             let prog = desertScene.camps.first { $0.site.id == campId }?.oasisProgress ?? oasisProgress
             gameManager.updateProgress(
@@ -743,18 +895,27 @@ struct GameView: View {
                     waterLevel: level,
                     oasisStage: stage.rawValue,
                     oasisProgress: prog
-                )
+                ),
+                tradeBeads: beads
             )
 
-            // Mission tracking for water delivery
+            if deliveries == 1 {
+                unlockAchievement("first_drop")
+                unlockDiaryPage("dream_first_delivery")
+            }
+            if deliveries >= 5 { unlockAchievement("five_deliveries") }
+
             missionManager.complete("keeper_first_drop")
             if deliveries >= 5 { missionManager.complete("merchants_route") }
             saveMissions()
 
             if unlockedCompass {
-                showToast("Water delivered! Compass unlocked.")
+                showToast("Water delivered! Compass unlocked — it points north.")
+                if equippedTool == .bucket { selectTool(.compass) }
             } else if unlockedDetector {
                 showToast("Water delivered! Detector unlocked.")
+            } else if helperBonus {
+                showToast("Double delivery — your companion helped!")
             } else if campId != "home" {
                 showToast("Water delivered to a new camp!")
             } else {
@@ -774,8 +935,35 @@ struct GameView: View {
             DispatchQueue.main.async { withAnimation { isNearBed = near } }
         }
 
+        desertScene.onNearHelperAnimal = { animal in
+            DispatchQueue.main.async { withAnimation { nearHelperAnimal = animal } }
+        }
+
+        desertScene.onCompassHUD = { angle in
+            DispatchQueue.main.async {
+                if compassHUDAngle == nil, angle != nil {
+                    withAnimation { compassHUDAngle = angle }
+                } else if compassHUDAngle != nil, angle == nil {
+                    withAnimation { compassHUDAngle = nil }
+                } else {
+                    compassHUDAngle = angle
+                }
+            }
+        }
+
+        desertScene.onDetectorHUD = { signal in
+            DispatchQueue.main.async {
+                if detectorHUDSignal == nil, signal != nil {
+                    withAnimation { detectorHUDSignal = signal }
+                } else if detectorHUDSignal != nil, signal == nil {
+                    withAnimation { detectorHUDSignal = nil }
+                } else {
+                    detectorHUDSignal = signal
+                }
+            }
+        }
+
         desertScene.onNearSettingsTable = { near in
-            // Table is flavour + a quiet shortcut into settings when tapped (handled in scene tap).
             _ = near
         }
 
@@ -804,7 +992,15 @@ struct GameView: View {
                     oasisStage = stage
                     oasisProgress = progress
                     if stage >= .pond { missionManager.complete("ancient_trial") }
-                    if stage == .lush { missionManager.complete("oasis_remembers") }
+                    if stage == .lush {
+                        missionManager.complete("oasis_remembers")
+                        unlockAchievement("oasis_lush")
+                        unlockDiaryPage("dream_lush")
+                    }
+                    if stage == .flourishing {
+                        unlockAchievement("oasis_flourishing")
+                        unlockDiaryPage("dream_flourishing")
+                    }
                     saveMissions()
                 }
                 persistCamp(campId)
@@ -816,11 +1012,11 @@ struct GameView: View {
 
         desertScene.onCampDiscovered = { site in
             showToast("A new camp! Help them grow an oasis.")
+            unlockAchievement("first_remote")
             gameManager.updateProgress(
                 slotIndex: slotIndex,
                 campProgress: CampProgress(id: site.id)
             )
-            // First remote camp found → unlock the mission; second → complete it.
             if missionManager.isActive("beyond_horizon") {
                 missionManager.complete("beyond_horizon")
             } else {
@@ -839,25 +1035,102 @@ struct GameView: View {
         desertScene.onWaterGivenToNPC = { npc in
             carryingWater = false
             dialogueManager.endConversation()
+            let beads = tradeBeads + 1
+            tradeBeads = beads
+            var helpedW = slot.helpedWanderers
+            var helpedL = slot.helpedLost
+            switch npc.personality {
+            case .wanderer:
+                helpedW += 1
+                missionManager.complete("wanderers_plea")
+            case .lost:
+                helpedL += 1
+                missionManager.complete("lost_and_found")
+            default: break
+            }
             gameManager.updateProgress(
                 slotIndex: slotIndex,
                 tasksCompleted: slot.tasksCompleted + 1,
-                isCarryingWater: false
+                isCarryingWater: false,
+                tradeBeads: beads,
+                helpedWanderers: helpedW,
+                helpedLost: helpedL
             )
-            switch npc.personality {
-            case .wanderer: missionManager.complete("wanderers_plea")
-            case .lost:     missionManager.complete("lost_and_found")
-            default: break
-            }
             saveMissions()
+            unlockDiaryPage("dream_first_help")
+            if helpedW + helpedL >= 5 { unlockAchievement("five_wanderers") }
             let name = npc.personality == .wanderer ? "the wanderer" : "the lost traveller"
             showToast("You shared your water with \(name).")
         }
 
         desertScene.onSleepFinished = {
             withAnimation { isSleeping = false }
+            let sleeps = slot.sleepsCompleted + 1
+            gameManager.updateProgress(slotIndex: slotIndex, sleepsCompleted: sleeps)
             showToast("A new day rises over the camp.")
             persistAllCamps()
+            // Dream diary unlock after sleep
+            maybeUnlockDreamAfterSleep()
+        }
+
+        desertScene.onSandstormBegan = {
+            DispatchQueue.main.async {
+                stormActive = true
+                showToast("A sandstorm rolls across the dunes…")
+            }
+        }
+
+        desertScene.onSandstormEnded = {
+            DispatchQueue.main.async {
+                stormActive = false
+                unlockAchievement("sandstorm_survived")
+                unlockDiaryPage("dream_storm")
+                showToast("The storm clears — the horizon returns.")
+            }
+        }
+
+        desertScene.onPleaMissionExpired = { missionId in
+            DispatchQueue.main.async {
+                if missionManager.isActive(missionId) {
+                    missionManager.fail(missionId)
+                    saveMissions()
+                    showToast("A traveller was lost to the dawn…")
+                }
+            }
+        }
+
+        desertScene.onHelperStateChanged = { kind, carrying in
+            DispatchQueue.main.async {
+                if let kind {
+                    gameManager.updateProgress(
+                        slotIndex: slotIndex,
+                        helperAnimalKind: .some(kind),
+                        isHelperCarryingWater: carrying
+                    )
+                } else {
+                    gameManager.updateProgress(
+                        slotIndex: slotIndex,
+                        clearHelperAnimal: true,
+                        isHelperCarryingWater: false
+                    )
+                }
+            }
+        }
+
+        desertScene.onPendingRespawnsChanged = { pending in
+            DispatchQueue.main.async {
+                gameManager.updateProgress(slotIndex: slotIndex, pendingWildNPCRespawns: pending)
+            }
+        }
+
+        desertScene.onWildNPCReturned = { personality in
+            DispatchQueue.main.async {
+                let missionId = personality == .wanderer ? "wanderers_plea" : "lost_and_found"
+                missionManager.reactivate(missionId)
+                saveMissions()
+                let name = personality == .wanderer ? "A wanderer" : "A lost traveller"
+                showToast("\(name) returns to the dunes.")
+            }
         }
     }
 
@@ -907,7 +1180,10 @@ struct GameView: View {
                 hasDetector: slot.hasWaterDetector,
                 playerName: slot.playerName,
                 oasisStageName: oasisStage.displayName.lowercased(),
-                oasisProgress: oasisProgress
+                oasisProgress: oasisProgress,
+                tradeBeads: tradeBeads,
+                helpCount: npc.helpCount,
+                hasLantern: slot.hasLantern
             )
         )
     }
@@ -919,6 +1195,14 @@ struct GameView: View {
             let dz = animal.position.z - player.position.z
             let r = animal.interactionRadius
             guard dx * dx + dz * dz < r * r else { return }
+        }
+        if animal.kind.canHelpCarryWater, carryingWater, !animal.isFollowingPlayer {
+            nearHelperAnimal = animal
+            if desertScene.tryLoadHelperAnimal(animal) {
+                unlockAchievement("animal_helper")
+                showToast("The \(animal.kind.displayName.lowercased()) carries extra water.")
+                return
+            }
         }
         animal.reactToTap()
         showToast(animal.kind.tapMessage)
@@ -970,6 +1254,133 @@ struct GameView: View {
         case .deliver: _ = desertScene.tryDeliverWater()
         case .collect: _ = desertScene.tryCollectWater()
         case .sleep: startSleep()
+        case .loadHelper(let animal):
+            if desertScene.tryLoadHelperAnimal(animal) {
+                unlockAchievement("animal_helper")
+                showToast("The \(animal.kind.displayName.lowercased()) carries extra water.")
+            }
+        case .openTrade:
+            isShowingTrade = true
+        }
+    }
+
+    private func cycleTool() {
+        let next = equippedTool.nextUnlocked(in: slot)
+        selectTool(next)
+    }
+
+    private func selectTool(_ tool: EquippableTool) {
+        guard tool.isUnlocked(in: slot) else { return }
+        equippedTool = tool
+        desertScene.setEquippedTool(tool)
+        gameManager.updateProgress(slotIndex: slotIndex, equippedTool: tool.rawValue)
+        AudioManager.shared.play(.uiTap)
+        isShowingToolPicker = false
+        // Clear HUD readouts immediately when leaving those tools; scene will re-publish next frame.
+        if tool != .compass { compassHUDAngle = nil }
+        if tool != .detector { detectorHUDSignal = nil }
+    }
+
+    private func buyTradeGood(_ good: TradeGood) {
+        guard tradeBeads >= good.cost else {
+            showToast("Not enough trade beads.")
+            return
+        }
+        if good == .lantern, slot.hasLantern {
+            showToast("You already own a lantern.")
+            return
+        }
+        if good == .campTrinket, slot.hasCampTrinket {
+            showToast("You already have a camp trinket.")
+            return
+        }
+
+        let beads = tradeBeads - good.cost
+        tradeBeads = beads
+        switch good {
+        case .lantern:
+            desertScene.unlockLantern()
+            gameManager.updateProgress(slotIndex: slotIndex, hasLantern: true, tradeBeads: beads)
+            selectTool(.lantern)
+            showToast("Lantern purchased — equip it for night travel.")
+        case .mapScrap:
+            gameManager.updateProgress(
+                slotIndex: slotIndex,
+                tradeBeads: beads,
+                mapScrapsOwned: slot.mapScrapsOwned + 1
+            )
+            if let kind = desertScene.pingNearestLandmark() {
+                if equippedTool != .detector, slot.hasWaterDetector {
+                    selectTool(.detector)
+                }
+                showToast("Map scrap: \(kind.displayName) is near — use the water detector.")
+            } else {
+                showToast("Map scrap bought — no landmark known yet. Keep exploring.")
+            }
+        case .campTrinket:
+            desertScene.camp?.setCampTrinketVisible(true)
+            gameManager.updateProgress(slotIndex: slotIndex, tradeBeads: beads, hasCampTrinket: true)
+            showToast("A trinket now brightens home camp.")
+        }
+        unlockAchievement("merchant_trade")
+        isShowingTrade = false
+    }
+
+    @discardableResult
+    private func unlockAchievement(_ id: String) -> Bool {
+        guard let def = achievementManager.unlock(id) else { return false }
+        gameManager.updateProgress(slotIndex: slotIndex, achievements: achievementManager.exportedIDs)
+        showToast("Achievement: \(def.title)")
+        return true
+    }
+
+    private func unlockDiaryPage(_ id: String) {
+        var pages = slot.diaryPages
+        guard !pages.contains(id) else { return }
+        pages.append(id)
+        gameManager.updateProgress(slotIndex: slotIndex, diaryPages: pages)
+        if Set(pages).isSuperset(of: Set(DiaryCatalog.allIDs)) {
+            unlockAchievement("all_diary")
+        }
+    }
+
+    private func maybeUnlockDreamAfterSleep() {
+        let candidates = [
+            "dream_first_delivery",
+            "dream_first_help",
+            "dream_lush",
+            "dream_flourishing",
+            "dream_storm",
+        ]
+        let owned = Set(slot.diaryPages)
+        // Prefer unlocking a milestone dream the player has earned but not yet read
+        if slot.waterDeliveries > 0, !owned.contains("dream_first_delivery") {
+            unlockDiaryPage("dream_first_delivery")
+            diaryRevealID = "dream_first_delivery"
+            isShowingDiary = true
+            return
+        }
+        if slot.helpedWanderers + slot.helpedLost > 0, !owned.contains("dream_first_help") {
+            unlockDiaryPage("dream_first_help")
+            diaryRevealID = "dream_first_help"
+            isShowingDiary = true
+            return
+        }
+        if oasisStage >= .lush, !owned.contains("dream_lush") {
+            unlockDiaryPage("dream_lush")
+            diaryRevealID = "dream_lush"
+            isShowingDiary = true
+            return
+        }
+        if oasisStage >= .flourishing, !owned.contains("dream_flourishing") {
+            unlockDiaryPage("dream_flourishing")
+            diaryRevealID = "dream_flourishing"
+            isShowingDiary = true
+            return
+        }
+        // Soft chance for any remaining catalog page already earned via other paths
+        if let next = candidates.first(where: { !owned.contains($0) && slot.diaryPages.contains($0) == false }) {
+            _ = next
         }
     }
 
@@ -1042,6 +1453,8 @@ struct SleepOverlay: View {
 
 struct PauseOverlay: View {
     var onResume: () -> Void
+    var onDiary: () -> Void
+    var onAchievements: () -> Void
     var onExitToCamp: () -> Void
 
     var body: some View {
@@ -1071,6 +1484,26 @@ struct PauseOverlay: View {
                         .frame(maxWidth: 260)
                         .padding(.vertical, 14)
                         .background(Color(red: 0.15, green: 0.50, blue: 0.80).opacity(0.95), in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: onDiary) {
+                        Text("Keeper's Diary")
+                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: 260)
+                            .padding(.vertical, 12)
+                            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: onAchievements) {
+                        Text("Achievements")
+                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: 260)
+                            .padding(.vertical, 12)
+                            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
                     }
                     .buttonStyle(.plain)
 
@@ -1211,7 +1644,7 @@ struct WorldLoadingOverlay: View {
 
 enum GameHardwareKey: Hashable {
     case moveForward, moveBack, moveLeft, moveRight
-    case run, jump, action, escape
+    case run, jump, action, escape, toolCycle
 }
 
 // MARK: - SCNView wrapper
@@ -1668,6 +2101,7 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
         case .keyboardLeftShift, .keyboardRightShift, .keyboardR: return .run
         case .keyboardSpacebar: return .jump
         case .keyboardE: return .action
+        case .keyboardQ: return .toolCycle
         case .keyboardEscape: return .escape
         default:
             break
@@ -1679,6 +2113,7 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
         case "a": return .moveLeft
         case "d": return .moveRight
         case "e": return .action
+        case "q": return .toolCycle
         case "r": return .run
         case " ": return .jump
         default: return nil
@@ -1738,7 +2173,7 @@ struct JoystickView: View {
 
 // MARK: - Action buttons
 
-private struct KeyCaptionBadge: View {
+struct KeyCaptionBadge: View {
     let label: String
 
     var body: some View {
