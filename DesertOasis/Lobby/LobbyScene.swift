@@ -169,8 +169,10 @@ final class LobbyScene: SCNScene {
         settingsZoneNode = table
     }
 
-    private let manExitPos   = SCNVector3(-0.55, 0, 3.2)
-    private let womanExitPos = SCNVector3( 0.55, 0, 3.2)
+    // Camera looks toward +Z, which mirrors world X on screen — place man at +X
+    // and woman at -X so they appear left/right under the He/Him and She/Her buttons.
+    private let manExitPos   = SCNVector3( 0.55, 0, 3.2)
+    private let womanExitPos = SCNVector3(-0.55, 0, 3.2)
     private let exitFacingYaw: Float = 0
     private let cameraFacingYaw: Float = .pi
 

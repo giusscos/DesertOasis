@@ -15,10 +15,12 @@ final class CampStatsSignNode: SCNNode {
     private var lastProgress: Float = -1
 
     /// Parchment face in local metres (must match `buildWood`).
+    /// Canvas voxels occupy z 4…5 → front face at origin.z + 6×unit ≈ 0.125 m.
     private let faceWidth: Float = 2.65
     private let faceBottom: Float = 1.40
     private let faceTop: Float = 2.95
-    private let faceZ: Float = 0.28
+    /// A few centimetres past the board so glyphs read clearly without floating.
+    private let faceZ: Float = 0.16
 
     private let titleScale: Float = 0.030
     private let bodyScale: Float = 0.026
@@ -99,18 +101,19 @@ final class CampStatsSignNode: SCNNode {
                            maxWidth: Float) {
         node.childNodes.forEach { $0.removeFromParentNode() }
 
-        let geo = SCNText(string: string, extrusionDepth: 1.0)
+        let geo = SCNText(string: string, extrusionDepth: 0.5)
         geo.font = UIFont(name: "AvenirNext-Bold", size: 12) ?? .boldSystemFont(ofSize: 12)
         geo.flatness = 0.12
-        geo.chamferRadius = 0.06
+        geo.chamferRadius = 0.03
         geo.alignmentMode = CATextLayerAlignmentMode.center.rawValue
 
         let front = SCNMaterial()
         front.diffuse.contents = color
-        front.emission.contents = color.withAlphaComponent(0.12)
+        front.emission.contents = color.withAlphaComponent(0.18)
         front.lightingModel = .constant
+        front.isDoubleSided = true
         let side = SCNMaterial()
-        side.diffuse.contents = color.withAlphaComponent(0.65)
+        side.diffuse.contents = color.withAlphaComponent(0.7)
         side.lightingModel = .constant
         geo.materials = [front, side]
 
@@ -123,11 +126,12 @@ final class CampStatsSignNode: SCNNode {
         }
         text.scale = SCNVector3(s, s, s)
 
-        // Pivot at glyph centre so slot Y is the visual midline.
+        // Pivot on the back of the glyphs so they grow out from the board.
         let midX = (minB.x + maxB.x) * 0.5
         let midY = (minB.y + maxB.y) * 0.5
-        text.pivot = SCNMatrix4MakeTranslation(midX, midY, 0)
+        text.pivot = SCNMatrix4MakeTranslation(midX, midY, minB.z)
         text.position = SCNVector3Zero
+        text.renderingOrder = 5
         node.addChildNode(text)
     }
 

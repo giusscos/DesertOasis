@@ -1043,6 +1043,13 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
                     && !$0.personality.canReceiveWater
             }
             c.updateIrrigation(deltaTime: dt, hasCampNPCs: hasNPCs || c.site.isHome)
+            if let playerNode {
+                c.updateOasisWater(
+                    deltaTime: dt,
+                    playerWorldPosition: playerNode.position,
+                    playerSpeed: playerHorizontalSpeed
+                )
+            }
         }
 
         updateEveningGather()

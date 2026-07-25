@@ -739,8 +739,8 @@ struct GameView: View {
                     Label("Bucket", systemImage: "drop.fill")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .frame(height: 40)
                         .background(Color.blue.opacity(0.55), in: Capsule())
                 }
 
@@ -748,8 +748,8 @@ struct GameView: View {
                     Label("\(tradeBeads)", systemImage: "circle.hexagongrid.fill")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .frame(height: 40)
                         .background(.black.opacity(0.45), in: Capsule())
                 }
 
@@ -757,8 +757,8 @@ struct GameView: View {
                     Label("Storm", systemImage: "wind")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .frame(height: 40)
                         .background(Color.orange.opacity(0.55), in: Capsule())
                 }
 
@@ -797,8 +797,8 @@ struct GameView: View {
         return Label(timeLabel, systemImage: icon)
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .frame(height: 40)
             .background(.black.opacity(0.45), in: Capsule())
     }
 
@@ -818,8 +818,8 @@ struct GameView: View {
             Text("\(value)").foregroundStyle(.white)
         }
         .font(.system(size: 12, weight: .bold))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 12)
+        .frame(height: 40)
         .background(.black.opacity(0.45), in: Capsule())
     }
 

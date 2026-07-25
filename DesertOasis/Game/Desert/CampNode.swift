@@ -143,7 +143,7 @@ final class CampNode: SCNNode {
         if visible {
             if trinketNode == nil {
                 let t = VoxelPropBuilder.campTrinket()
-                t.position = SCNVector3(-0.6, 0, -1.2)
+                t.position = SCNVector3(-2.8, 0, -0.4)
                 addChildNode(t)
                 trinketNode = t
             }
@@ -181,6 +181,15 @@ final class CampNode: SCNNode {
         let advanced = oasisGrowth.addProgress(CampOasisGrowthNode.progressPerTick)
         refreshStatsSign()
         onIrrigated?(fillLevel, oasisGrowth.stage, oasisGrowth.progress, advanced)
+    }
+
+    /// Animate the camp pool surface (same water system as wild oases).
+    func updateOasisWater(deltaTime: Float, playerWorldPosition: SCNVector3, playerSpeed: Float) {
+        oasisGrowth.updateWater(
+            deltaTime: deltaTime,
+            playerWorldPosition: playerWorldPosition,
+            playerSpeed: playerSpeed
+        )
     }
 
     /// Fast-forward irrigation during sleep (amount ≈ seconds of work).
@@ -444,46 +453,58 @@ final class CampNode: SCNNode {
         }
     }
 
+    /// Open plaza center — clear of every tent entrance.
+    private var waterHub: SCNVector3 { SCNVector3(0, 0, -6.5) }
+
+    /// Distance from oasis center to keep props off the water.
+    private var oasisRim: Float { CampOasisGrowthNode.poolRadius + 1.9 }
+
     private func buildBarrel() {
         barrelNode = VoxelPropBuilder.waterBarrel()
-        barrelNode.position = SCNVector3(3.6, 0, -2.2)
+        // South-east rim — opposite the main tent entrance.
+        barrelNode.position = SCNVector3(waterHub.x + oasisRim * 0.55, 0, waterHub.z - oasisRim * 0.85)
         waterSurface = barrelNode.childNode(withName: "water_surface", recursively: true)!
         addChildNode(barrelNode)
     }
 
     private func buildTrough() {
         let trough = VoxelPropBuilder.waterTrough()
-        trough.position = SCNVector3(5.4, 0, -1.4)
-        trough.eulerAngles.y = -0.4
+        trough.position = SCNVector3(waterHub.x + oasisRim * 0.95, 0, waterHub.z - oasisRim * 0.45)
+        trough.eulerAngles.y = -0.55
         addChildNode(trough)
         troughNode = trough
     }
 
     private func buildMerchantCrate() {
         let crate = VoxelPropBuilder.merchantCrate()
-        crate.position = SCNVector3(-3.2, 0, -0.8)
+        crate.position = SCNVector3(-3.4, 0, 0.8)
         addChildNode(crate)
         merchantCrateNode = crate
     }
 
     private func buildCampfire() {
         campfireNode = VoxelPropBuilder.campfire()
-        campfireNode.position = SCNVector3(-1.8, 0, -2.4)
+        campfireNode.position = SCNVector3(-2.2, 0, 0.4)
         addChildNode(campfireNode)
     }
 
     private func buildOasisGrowth() {
         oasisGrowth = CampOasisGrowthNode()
-        // Grow the oasis on the open side of camp, opposite the main tent.
-        oasisGrowth.position = SCNVector3(0.5, 0, -5.5)
+        oasisGrowth.position = waterHub
         addChildNode(oasisGrowth)
+        oasisGrowth.attachPool(
+            worldX: position.x + waterHub.x,
+            worldZ: position.z + waterHub.z
+        )
     }
 
     private func buildStatsSign() {
         statsSign = CampStatsSignNode(title: site.displayName)
-        // South-east of the plaza by the barrel, face south so third-person
-        // cameras looking into camp read the board head-on.
-        statsSign.position = SCNVector3(4.6, 0, -3.8)
+        // Just behind the barrel (further from the tent), outside the pool.
+        // Face north so labels read from the plaza.
+        let bx = waterHub.x + oasisRim * 0.55
+        let bz = waterHub.z - oasisRim * 0.85
+        statsSign.position = SCNVector3(bx + 0.15, 0, bz - 1.2)
         statsSign.eulerAngles.y = .pi
         addChildNode(statsSign)
         refreshStatsSign()
