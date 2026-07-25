@@ -16,7 +16,7 @@ final class AchievementManager {
         .init(id: "oasis_lush", title: "Living Oasis", body: "Grow a camp oasis to a living oasis."),
         .init(id: "oasis_flourishing", title: "Flourishing", body: "Push a camp oasis into flourishing life."),
         .init(id: "five_deliveries", title: "Steady Hands", body: "Make five water deliveries."),
-        .init(id: "animal_helper", title: "Trail Companion", body: "Load a camel or goat with water."),
+        .init(id: "animal_helper", title: "Trail Companion", body: "Call a camel or goat to follow with the magic stick."),
         .init(id: "five_wanderers", title: "Kindness of the Dunes", body: "Help five weary travellers."),
         .init(id: "sandstorm_survived", title: "Through the Storm", body: "Wait out a sandstorm."),
         .init(id: "merchant_trade", title: "Open the Route", body: "Buy something from the merchant."),

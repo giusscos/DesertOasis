@@ -326,7 +326,35 @@ enum VoxelAnimalBuilder {
 enum AnimalAnim {
     static let idleKey = "animal_idle"
     static let walkKey = "animal_walk"
+    static let runKey = "animal_run"
     static let reactKey = "animal_react"
+
+    private static var restPoses: [ObjectIdentifier: SCNVector3] = [:]
+
+    static func bindRestPose(_ node: SCNNode) {
+        let id = ObjectIdentifier(node)
+        if restPoses[id] == nil {
+            restPoses[id] = node.position
+        }
+    }
+
+    private static func restPosition(of node: SCNNode) -> SCNVector3 {
+        bindRestPose(node)
+        return restPoses[ObjectIdentifier(node)] ?? node.position
+    }
+
+    private static func restoreRestPose(_ node: SCNNode) {
+        node.position = restPosition(of: node)
+    }
+
+    private static func bobAction(on node: SCNNode, amplitude: Float, halfPeriod: Double) -> SCNAction {
+        let rest = restPosition(of: node)
+        let up = SCNAction.move(to: SCNVector3(rest.x, rest.y + amplitude, rest.z), duration: halfPeriod)
+        let down = SCNAction.move(to: SCNVector3(rest.x, rest.y - amplitude * 0.35, rest.z), duration: halfPeriod)
+        up.timingMode = .easeInEaseOut
+        down.timingMode = .easeInEaseOut
+        return .repeatForever(.sequence([up, down]))
+    }
 
     static func playIdle(on animal: SCNNode, kind: AnimalKind) {
         stopLocomotion(on: animal)
@@ -339,10 +367,8 @@ enum AnimalAnim {
                 ])), forKey: idleKey)
             }
             if let body = animal.childNode(withName: "body", recursively: false) {
-                body.runAction(.repeatForever(.sequence([
-                    .moveBy(x: 0, y: 0.015, z: 0, duration: 1.2),
-                    .moveBy(x: 0, y: -0.015, z: 0, duration: 1.2)
-                ])), forKey: idleKey)
+                bindRestPose(body)
+                body.runAction(bobAction(on: body, amplitude: 0.015, halfPeriod: 1.2), forKey: idleKey)
             }
         case .lizard:
             if let tail = animal.childNode(withName: "tail", recursively: false) {
@@ -353,10 +379,8 @@ enum AnimalAnim {
             }
         case .bird:
             if let body = animal.childNode(withName: "body", recursively: false) {
-                body.runAction(.repeatForever(.sequence([
-                    .moveBy(x: 0, y: 0.02, z: 0, duration: 0.45),
-                    .moveBy(x: 0, y: -0.02, z: 0, duration: 0.45)
-                ])), forKey: idleKey)
+                bindRestPose(body)
+                body.runAction(bobAction(on: body, amplitude: 0.02, halfPeriod: 0.45), forKey: idleKey)
             }
             if let head = animal.childNode(withName: "head", recursively: false) {
                 head.runAction(.repeatForever(.sequence([
@@ -368,11 +392,25 @@ enum AnimalAnim {
     }
 
     static func playWalk(on animal: SCNNode, kind: AnimalKind) {
+        playQuadrupedGait(on: animal, kind: kind, swingScale: 1.0, speedScale: 1.0, key: walkKey)
+    }
+
+    static func playRun(on animal: SCNNode, kind: AnimalKind) {
+        playQuadrupedGait(on: animal, kind: kind, swingScale: 1.45, speedScale: 1.7, key: runKey)
+    }
+
+    private static func playQuadrupedGait(on animal: SCNNode,
+                                          kind: AnimalKind,
+                                          swingScale: Float,
+                                          speedScale: Float,
+                                          key: String) {
         stopLocomotion(on: animal)
         switch kind {
         case .camel, .goat, .lizard:
-            let swing: Float = kind == .lizard ? 0.45 : (kind == .goat ? 0.50 : 0.40)
-            let dur: Double = kind == .lizard ? 0.14 : (kind == .goat ? 0.20 : 0.30)
+            let baseSwing: Float = kind == .lizard ? 0.45 : (kind == .goat ? 0.50 : 0.40)
+            let baseDur: Double = kind == .lizard ? 0.14 : (kind == .goat ? 0.20 : 0.30)
+            let swing = baseSwing * swingScale
+            let dur = baseDur / Double(speedScale)
             let pairs: [(String, Float)] = [
                 ("leg_FL", swing), ("leg_BR", swing),
                 ("leg_FR", -swing), ("leg_BL", -swing),
@@ -382,23 +420,27 @@ enum AnimalAnim {
                 leg.runAction(.repeatForever(.sequence([
                     .rotateTo(x: CGFloat(start), y: 0, z: 0, duration: dur),
                     .rotateTo(x: CGFloat(-start), y: 0, z: 0, duration: dur)
-                ])), forKey: walkKey)
+                ])), forKey: key)
+            }
+            if let body = animal.childNode(withName: "body", recursively: false), key == runKey {
+                bindRestPose(body)
+                body.runAction(bobAction(on: body, amplitude: 0.04, halfPeriod: dur), forKey: key)
             }
             if kind == .lizard, let tail = animal.childNode(withName: "tail", recursively: false) {
                 tail.runAction(.repeatForever(.sequence([
-                    .rotateTo(x: 0, y: 0.5, z: 0, duration: dur),
-                    .rotateTo(x: 0, y: -0.5, z: 0, duration: dur)
-                ])), forKey: walkKey)
+                    .rotateTo(x: 0, y: 0.5 * CGFloat(swingScale), z: 0, duration: dur),
+                    .rotateTo(x: 0, y: -0.5 * CGFloat(swingScale), z: 0, duration: dur)
+                ])), forKey: key)
             }
         case .bird:
-            flapWings(on: animal, duration: 0.12, amplitude: 0.7, forever: true)
+            flapWings(on: animal, duration: 0.12 / Double(speedScale), amplitude: 0.7 * swingScale, forever: true, key: key)
             for name in ["leg_L", "leg_R"] {
                 guard let leg = animal.childNode(withName: name, recursively: false) else { continue }
                 let sign: Float = name == "leg_L" ? 0.4 : -0.4
                 leg.runAction(.repeatForever(.sequence([
-                    .rotateTo(x: CGFloat(sign), y: 0, z: 0, duration: 0.12),
-                    .rotateTo(x: CGFloat(-sign), y: 0, z: 0, duration: 0.12)
-                ])), forKey: walkKey)
+                    .rotateTo(x: CGFloat(sign * swingScale), y: 0, z: 0, duration: 0.12 / Double(speedScale)),
+                    .rotateTo(x: CGFloat(-sign * swingScale), y: 0, z: 0, duration: 0.12 / Double(speedScale))
+                ])), forKey: key)
             }
         }
     }
@@ -422,13 +464,20 @@ enum AnimalAnim {
             }
 
         case .goat:
-            let hop = SCNAction.sequence([
-                .moveBy(x: 0, y: 0.25, z: 0, duration: 0.15),
-                .moveBy(x: 0, y: -0.25, z: 0, duration: 0.18),
-                finish
-            ])
-            hop.timingMode = .easeOut
-            animal.runAction(hop, forKey: reactKey)
+            // Hop the body mesh (not the root) so ground Y never drifts.
+            if let body = animal.childNode(withName: "body", recursively: false) {
+                bindRestPose(body)
+                let rest = restPosition(of: body)
+                let hop = SCNAction.sequence([
+                    .move(to: SCNVector3(rest.x, rest.y + 0.25, rest.z), duration: 0.15),
+                    .move(to: rest, duration: 0.18),
+                    finish
+                ])
+                hop.timingMode = .easeOut
+                body.runAction(hop, forKey: reactKey)
+            } else {
+                animal.runAction(.sequence([finish]), forKey: reactKey)
+            }
             if let neck = animal.childNode(withName: "neck", recursively: false) {
                 neck.runAction(.sequence([
                     .rotateTo(x: -0.4, y: 0, z: 0, duration: 0.12),
@@ -487,15 +536,20 @@ enum AnimalAnim {
             if let n = animal.childNode(withName: name, recursively: false) {
                 n.removeAction(forKey: idleKey)
                 n.removeAction(forKey: walkKey)
+                n.removeAction(forKey: runKey)
                 n.removeAction(forKey: reactKey)
-                // Reset mild rotations so idle/walk don't stack crooked
                 if name.hasPrefix("leg") || name.hasPrefix("wing") {
                     n.eulerAngles = SCNVector3Zero
+                }
+                if name == "body" {
+                    n.eulerAngles = SCNVector3Zero
+                    restoreRestPose(n)
                 }
             }
         }
         animal.removeAction(forKey: idleKey)
         animal.removeAction(forKey: walkKey)
+        animal.removeAction(forKey: runKey)
         animal.removeAction(forKey: reactKey)
     }
 }

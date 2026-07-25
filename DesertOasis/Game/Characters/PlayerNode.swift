@@ -5,6 +5,7 @@ final class PlayerNode: SCNNode {
 
     private var characterNode: SCNNode!
     private var isWalking = false
+    private var isRunningAnim = false
     private(set) var isAirborne = false
 
     init(gender: SaveSlot.CharacterGender) {
@@ -25,16 +26,23 @@ final class PlayerNode: SCNNode {
         physicsBody?.contactTestBitMask = PhysicsCategory.npc | PhysicsCategory.item
     }
 
-    func setWalking(_ walking: Bool) {
+    func setWalking(_ walking: Bool, running: Bool = false) {
+        let run = walking && running
         guard !isAirborne else {
             isWalking = walking
+            isRunningAnim = run
             return
         }
-        guard walking != isWalking else { return }
+        guard walking != isWalking || run != isRunningAnim else { return }
         isWalking = walking
+        isRunningAnim = run
         notifyWalkAudio(walking)
         if walking {
-            VoxelAnim.playWalk(on: characterNode)
+            if run {
+                VoxelAnim.playRun(on: characterNode)
+            } else {
+                VoxelAnim.playWalk(on: characterNode)
+            }
         } else {
             VoxelAnim.playIdle(on: characterNode)
         }
@@ -50,7 +58,11 @@ final class PlayerNode: SCNNode {
         guard isAirborne else { return }
         isAirborne = false
         if isWalking {
-            VoxelAnim.playWalk(on: characterNode)
+            if isRunningAnim {
+                VoxelAnim.playRun(on: characterNode)
+            } else {
+                VoxelAnim.playWalk(on: characterNode)
+            }
             notifyWalkAudio(true)
         } else {
             VoxelAnim.playIdle(on: characterNode)
@@ -72,7 +84,11 @@ final class PlayerNode: SCNNode {
         if isAirborne {
             VoxelAnim.playJump(on: characterNode)
         } else if isWalking {
-            VoxelAnim.playWalk(on: characterNode)
+            if isRunningAnim {
+                VoxelAnim.playRun(on: characterNode)
+            } else {
+                VoxelAnim.playWalk(on: characterNode)
+            }
         } else {
             VoxelAnim.playIdle(on: characterNode)
         }

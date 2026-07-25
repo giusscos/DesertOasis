@@ -99,6 +99,7 @@ final class GameManager {
         helperAnimalKind: String?? = nil,
         clearHelperAnimal: Bool = false,
         isHelperCarryingWater: Bool? = nil,
+        helperCarriedBuckets: Int? = nil,
         sleepsCompleted: Int? = nil,
         pendingWildNPCRespawns: [PendingNPCRespawn]? = nil,
         discoveredLandmarks: [String]? = nil,
@@ -133,10 +134,20 @@ final class GameManager {
         if let hlost = helpedLost   { saveSlots[slotIndex].helpedLost = hlost }
         if clearHelperAnimal {
             saveSlots[slotIndex].helperAnimalKind = nil
+            saveSlots[slotIndex].helperCarriedBuckets = 0
+            saveSlots[slotIndex].isHelperCarryingWater = false
         } else if let wrapped = helperAnimalKind {
             saveSlots[slotIndex].helperAnimalKind = wrapped
         }
-        if let hc = isHelperCarryingWater { saveSlots[slotIndex].isHelperCarryingWater = hc }
+        if let buckets = helperCarriedBuckets {
+            saveSlots[slotIndex].helperCarriedBuckets = max(0, buckets)
+            saveSlots[slotIndex].isHelperCarryingWater = buckets > 0
+        } else if let hc = isHelperCarryingWater {
+            saveSlots[slotIndex].isHelperCarryingWater = hc
+            saveSlots[slotIndex].helperCarriedBuckets = hc
+                ? max(1, saveSlots[slotIndex].helperCarriedBuckets)
+                : 0
+        }
         if let sc = sleepsCompleted { saveSlots[slotIndex].sleepsCompleted = sc }
         if let pr = pendingWildNPCRespawns { saveSlots[slotIndex].pendingWildNPCRespawns = pr }
         if let dl = discoveredLandmarks { saveSlots[slotIndex].discoveredLandmarks = dl }

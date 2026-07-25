@@ -12,6 +12,8 @@ final class PlayerToolRig: SCNNode {
     private var detectorLamp: SCNNode!
     private(set) var lanternNode: SCNNode!
     private var lanternLight: SCNLight!
+    private(set) var magicStickNode: SCNNode!
+    private var magicStickGlow: SCNNode!
 
     private(set) var isCarryingWater = false
     private(set) var hasCompass = false
@@ -28,6 +30,7 @@ final class PlayerToolRig: SCNNode {
         buildCompass()
         buildDetector()
         buildLantern()
+        buildMagicStick()
         setCarryingWater(false)
         setCompassUnlocked(false)
         setDetectorUnlocked(false)
@@ -77,10 +80,13 @@ final class PlayerToolRig: SCNNode {
 
         let showDetector = hasDetector && equipped == .detector
         let showLantern = hasLantern && equipped == .lantern
+        let showStick = equipped == .magicStick
 
         detectorNode.isHidden = !showDetector
         lanternNode.isHidden = !showLantern
         lanternLight.intensity = showLantern ? 280 : 0
+        magicStickNode.isHidden = !showStick
+        magicStickGlow.geometry?.firstMaterial?.emission.intensity = showStick ? 0.85 : 0
     }
 
     func updateDetector(signal: Float, time: Float, clarity: Float = 1) {
@@ -252,5 +258,35 @@ final class PlayerToolRig: SCNNode {
         lanternLight = light
 
         addChildNode(lanternNode)
+    }
+
+    private func buildMagicStick() {
+        magicStickNode = SCNNode()
+        magicStickNode.name = "prop_magic_stick"
+        magicStickNode.position = SCNVector3(0.40, 0.78, 0.12)
+        magicStickNode.eulerAngles = SCNVector3(-0.55, 0.15, 0.25)
+
+        let u = Self.uf
+        let shaftS = VoxelSculpture(sizeX: 2, sizeY: 14, sizeZ: 2,
+                                    origin: SIMD3<Float>(-1, 0, -1) * u)
+        shaftS.fillBox(x0: 0, y0: 0, z0: 0, x1: 1, y1: 12, z1: 1, type: .darkWood)
+        shaftS.fillBox(x0: 0, y0: 10, z0: 0, x1: 1, y1: 11, z1: 1, type: .wood)
+        let shaft = shaftS.makeNode(name: "stick_shaft")
+        magicStickNode.addChildNode(shaft)
+
+        let tipS = VoxelSculpture(sizeX: 3, sizeY: 3, sizeZ: 3,
+                                  origin: SIMD3<Float>(-1.5, 0, -1.5) * u)
+        tipS.fillSphere(cx: 1.5, cy: 1.5, cz: 1.5, r: 1.3, type: .brass)
+        magicStickGlow = tipS.makeNode(name: "stick_glow") { _ in
+            UIColor(red: 0.35, green: 0.75, blue: 0.95, alpha: 1)
+        }
+        magicStickGlow.geometry?.firstMaterial?.emission.contents =
+            UIColor(red: 0.40, green: 0.85, blue: 1.0, alpha: 1)
+        magicStickGlow.geometry?.firstMaterial?.emission.intensity = 0.85
+        magicStickGlow.geometry?.firstMaterial?.lightingModel = .constant
+        magicStickGlow.position.y = 0.52
+        magicStickNode.addChildNode(magicStickGlow)
+
+        addChildNode(magicStickNode)
     }
 }

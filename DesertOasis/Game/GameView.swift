@@ -98,7 +98,7 @@ struct GameView: View {
             case .deliver:   "Deliver"
             case .collect:   "Collect"
             case .sleep:     "Sleep"
-            case .loadHelper: "Load"
+            case .loadHelper(let animal): animal.isFollowingPlayer ? "Load" : "Call"
             case .openTrade: "Trade"
             }
         }
@@ -125,10 +125,18 @@ struct GameView: View {
             return .giveWater(npc)
         }
         if isNearBarrel { return .deliver }
-        if let animal = nearHelperAnimal, carryingWater, !animal.isFollowingPlayer {
-            return .loadHelper(animal)
+        if let animal = nearHelperAnimal {
+            // Load water onto a following companion.
+            if animal.isFollowingPlayer, carryingWater,
+               animal.carriedBuckets < animal.kind.waterBucketCapacity {
+                return .loadHelper(animal)
+            }
+            // Call with the magic stick.
+            if !animal.isFollowingPlayer, equippedTool == .magicStick {
+                return .loadHelper(animal)
+            }
         }
-        if isNearWater && !carryingWater { return .collect }
+        if isNearWater { return .collect }
         if isNearBed && !carryingWater && canSleepNow { return .sleep }
         return nil
     }
@@ -857,16 +865,28 @@ struct GameView: View {
         }
 
         desertScene.onWaterCollected = {
-            carryingWater = true
+            carryingWater = desertScene.isCarryingWater
             AudioManager.shared.play(.collect)
             gameManager.updateProgress(
                 slotIndex: slotIndex,
                 waterFound: slot.waterFound + 1,
-                isCarryingWater: true
+                isCarryingWater: desertScene.isCarryingWater
             )
             missionManager.unlock("glimmer_in_dust")
             saveMissions()
-            showToast("Bucket filled — bring it to camp!")
+            if let helper = desertScene.activeHelperAnimal, helper.isCarryingWater {
+                let cap = helper.carriedBuckets
+                let name = helper.kind.displayName.lowercased()
+                if desertScene.isCarryingWater {
+                    showToast("Filled — you and the \(name) carry \(1 + cap) bucket\(1 + cap == 1 ? "" : "s").")
+                } else {
+                    showToast("Your bucket is full — the \(name) took \(cap) bucket\(cap == 1 ? "" : "s").")
+                }
+            } else if desertScene.isCarryingWater {
+                showToast("Bucket filled — bring it to camp!")
+            } else {
+                showToast("Collected water.")
+            }
         }
 
         desertScene.onWaterDelivered = { level, unlockedCompass, unlockedDetector, campId, helperBonus in
@@ -915,7 +935,7 @@ struct GameView: View {
             } else if unlockedDetector {
                 showToast("Water delivered! Detector unlocked.")
             } else if helperBonus {
-                showToast("Double delivery — your companion helped!")
+                showToast("Companion delivery — extra buckets poured!")
             } else if campId != "home" {
                 showToast("Water delivered to a new camp!")
             } else {
@@ -1099,19 +1119,19 @@ struct GameView: View {
             }
         }
 
-        desertScene.onHelperStateChanged = { kind, carrying in
+        desertScene.onHelperStateChanged = { kind, buckets in
             DispatchQueue.main.async {
                 if let kind {
                     gameManager.updateProgress(
                         slotIndex: slotIndex,
                         helperAnimalKind: .some(kind),
-                        isHelperCarryingWater: carrying
+                        helperCarriedBuckets: buckets
                     )
                 } else {
                     gameManager.updateProgress(
                         slotIndex: slotIndex,
                         clearHelperAnimal: true,
-                        isHelperCarryingWater: false
+                        helperCarriedBuckets: 0
                     )
                 }
             }
@@ -1196,11 +1216,46 @@ struct GameView: View {
             let r = animal.interactionRadius
             guard dx * dx + dz * dz < r * r else { return }
         }
+
+        // Give water to a following helper that still has room.
+        if animal.isFollowingPlayer, carryingWater,
+           animal.carriedBuckets < animal.kind.waterBucketCapacity {
+            if desertScene.tryFillHelperFromPlayer() {
+                let cap = animal.carriedBuckets
+                showToast("The \(animal.kind.displayName.lowercased()) takes on \(cap) bucket\(cap == 1 ? "" : "s").")
+                return
+            }
+        }
+
+        // Magic stick: click a camel/goat to call or dismiss them.
+        if equippedTool == .magicStick, animal.kind.canHelpCarryWater {
+            if animal.isFollowingPlayer {
+                if animal.isCarryingWater {
+                    showToast("The \(animal.kind.displayName.lowercased()) won't leave while carrying water.")
+                    return
+                }
+                if desertScene.dismissHelperAnimal() {
+                    showToast("The \(animal.kind.displayName.lowercased()) wanders off.")
+                }
+                return
+            }
+            if desertScene.tryCharmAnimalWithStick(animal) {
+                unlockAchievement("animal_helper")
+                let cap = animal.kind.waterBucketCapacity
+                showToast("The \(animal.kind.displayName.lowercased()) follows. Collect at an oasis — it hauls up to \(cap) bucket\(cap == 1 ? "" : "s").")
+                return
+            } else if desertScene.activeHelperAnimal?.isCarryingWater == true {
+                showToast("Your companion is still carrying water.")
+                return
+            }
+        }
+
         if animal.kind.canHelpCarryWater, carryingWater, !animal.isFollowingPlayer {
             nearHelperAnimal = animal
             if desertScene.tryLoadHelperAnimal(animal) {
                 unlockAchievement("animal_helper")
-                showToast("The \(animal.kind.displayName.lowercased()) carries extra water.")
+                let cap = animal.kind.waterBucketCapacity
+                showToast("The \(animal.kind.displayName.lowercased()) carries \(cap) extra bucket\(cap == 1 ? "" : "s").")
                 return
             }
         }
@@ -1255,9 +1310,23 @@ struct GameView: View {
         case .collect: _ = desertScene.tryCollectWater()
         case .sleep: startSleep()
         case .loadHelper(let animal):
-            if desertScene.tryLoadHelperAnimal(animal) {
+            if animal.isFollowingPlayer {
+                if desertScene.tryFillHelperFromPlayer() {
+                    let cap = animal.carriedBuckets
+                    showToast("The \(animal.kind.displayName.lowercased()) takes on \(cap) bucket\(cap == 1 ? "" : "s").")
+                }
+            } else if equippedTool == .magicStick {
+                if desertScene.tryCharmAnimalWithStick(animal) {
+                    unlockAchievement("animal_helper")
+                    let cap = animal.kind.waterBucketCapacity
+                    showToast("The \(animal.kind.displayName.lowercased()) follows. Collect at an oasis — it hauls up to \(cap) bucket\(cap == 1 ? "" : "s").")
+                } else if desertScene.activeHelperAnimal?.isCarryingWater == true {
+                    showToast("Your companion is still carrying water.")
+                }
+            } else if desertScene.tryLoadHelperAnimal(animal) {
                 unlockAchievement("animal_helper")
-                showToast("The \(animal.kind.displayName.lowercased()) carries extra water.")
+                let cap = animal.kind.waterBucketCapacity
+                showToast("The \(animal.kind.displayName.lowercased()) carries \(cap) extra bucket\(cap == 1 ? "" : "s").")
             }
         case .openTrade:
             isShowingTrade = true

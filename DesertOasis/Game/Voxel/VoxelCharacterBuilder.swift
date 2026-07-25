@@ -133,6 +133,7 @@ enum VoxelCharacterBuilder {
         torsoS.fillEllipsoid(cx: 5.5, cy: 8.5, cz: 3.5, rx: 4.8, ry: 5.2, rz: 2.8, type: .cloth)
         let torso = sculptNode(torsoS, name: "torso", colors: colors)
         torso.position.y = 12 * u
+        VoxelAnim.bindRestPose(torso)
         root.addChildNode(torso)
 
         // --- Arms ---
@@ -239,46 +240,105 @@ enum VoxelCharacterBuilder {
 enum VoxelAnim {
     static let idleKey = "voxel_idle"
     static let walkKey = "voxel_walk"
+    static let runKey = "voxel_run"
     static let talkKey = "voxel_talk"
     static let jumpKey = "voxel_jump"
+
+    private static let restYKey = "voxel_rest_y"
+    private static var restPoses: [ObjectIdentifier: SCNVector3] = [:]
+
+    /// Capture authored local position once so bob actions never ratchet upward.
+    static func bindRestPose(_ node: SCNNode) {
+        let id = ObjectIdentifier(node)
+        if restPoses[id] == nil {
+            restPoses[id] = node.position
+        }
+    }
+
+    private static func restPosition(of node: SCNNode) -> SCNVector3 {
+        bindRestPose(node)
+        return restPoses[ObjectIdentifier(node)] ?? node.position
+    }
+
+    private static func restoreRestPose(_ node: SCNNode) {
+        node.position = restPosition(of: node)
+    }
+
+    /// Absolute bob around rest Y — safe to interrupt without drifting.
+    private static func bobAction(on node: SCNNode, amplitude: Float, halfPeriod: Double) -> SCNAction {
+        let rest = restPosition(of: node)
+        let up = SCNAction.move(to: SCNVector3(rest.x, rest.y + amplitude, rest.z), duration: halfPeriod)
+        let down = SCNAction.move(to: SCNVector3(rest.x, rest.y - amplitude * 0.35, rest.z), duration: halfPeriod)
+        up.timingMode = .easeInEaseOut
+        down.timingMode = .easeInEaseOut
+        return .repeatForever(.sequence([up, down]))
+    }
 
     static func playIdle(on character: SCNNode) {
         stopAll(on: character)
         guard let torso = character.childNode(withName: "torso", recursively: false) else { return }
-        let breathe = SCNAction.repeatForever(.sequence([
-            .moveBy(x: 0, y: 0.02, z: 0, duration: 1.1),
-            .moveBy(x: 0, y: -0.02, z: 0, duration: 1.1)
-        ]))
-        torso.runAction(breathe, forKey: idleKey)
+        bindRestPose(torso)
+        torso.runAction(bobAction(on: torso, amplitude: 0.02, halfPeriod: 1.1), forKey: idleKey)
     }
 
     static func playWalk(on character: SCNNode) {
         stopAll(on: character)
         let swing: Float = 0.55
         let dur = 0.28
+        applyLegArmSwing(on: character, swing: swing, duration: dur, key: walkKey)
+        if let torso = character.childNode(withName: "torso", recursively: false) {
+            bindRestPose(torso)
+            torso.runAction(bobAction(on: torso, amplitude: 0.03, halfPeriod: dur), forKey: walkKey)
+        }
+    }
+
+    /// Faster cadence, deeper stride, forward lean — reads clearly vs walk.
+    static func playRun(on character: SCNNode) {
+        stopAll(on: character)
+        let swing: Float = 0.95
+        let armSwing: Float = 1.05
+        let dur = 0.15
+        applyLegArmSwing(on: character, swing: swing, armSwing: armSwing, duration: dur, key: runKey)
+
+        if let torso = character.childNode(withName: "torso", recursively: false) {
+            bindRestPose(torso)
+            torso.eulerAngles.x = 0.22
+            torso.runAction(bobAction(on: torso, amplitude: 0.055, halfPeriod: dur), forKey: runKey)
+        }
+        if let head = character.childNode(withName: "head", recursively: false) {
+            head.eulerAngles.x = -0.08
+        }
+    }
+
+    private static func applyLegArmSwing(on character: SCNNode,
+                                         swing: Float,
+                                         armSwing: Float? = nil,
+                                         duration dur: Double,
+                                         key: String) {
+        let arms = armSwing ?? swing
         if let legL = character.childNode(withName: "leg_L", recursively: false) {
             legL.runAction(.repeatForever(.sequence([
                 .rotateTo(x: CGFloat(swing), y: 0, z: 0, duration: dur),
                 .rotateTo(x: CGFloat(-swing), y: 0, z: 0, duration: dur)
-            ])), forKey: walkKey)
+            ])), forKey: key)
         }
         if let legR = character.childNode(withName: "leg_R", recursively: false) {
             legR.runAction(.repeatForever(.sequence([
                 .rotateTo(x: CGFloat(-swing), y: 0, z: 0, duration: dur),
                 .rotateTo(x: CGFloat(swing), y: 0, z: 0, duration: dur)
-            ])), forKey: walkKey)
+            ])), forKey: key)
         }
         if let armL = character.childNode(withName: "arm_L", recursively: false) {
             armL.runAction(.repeatForever(.sequence([
-                .rotateTo(x: CGFloat(-swing), y: 0, z: 0, duration: dur),
-                .rotateTo(x: CGFloat(swing), y: 0, z: 0, duration: dur)
-            ])), forKey: walkKey)
+                .rotateTo(x: CGFloat(-arms), y: 0, z: 0.08, duration: dur),
+                .rotateTo(x: CGFloat(arms * 0.7), y: 0, z: 0.08, duration: dur)
+            ])), forKey: key)
         }
         if let armR = character.childNode(withName: "arm_R", recursively: false) {
             armR.runAction(.repeatForever(.sequence([
-                .rotateTo(x: CGFloat(swing), y: 0, z: 0, duration: dur),
-                .rotateTo(x: CGFloat(-swing), y: 0, z: 0, duration: dur)
-            ])), forKey: walkKey)
+                .rotateTo(x: CGFloat(arms * 0.7), y: 0, z: -0.08, duration: dur),
+                .rotateTo(x: CGFloat(-arms), y: 0, z: -0.08, duration: dur)
+            ])), forKey: key)
         }
     }
 
@@ -327,12 +387,16 @@ enum VoxelAnim {
         character.enumerateChildNodes { node, _ in
             node.removeAction(forKey: idleKey)
             node.removeAction(forKey: walkKey)
+            node.removeAction(forKey: runKey)
             node.removeAction(forKey: talkKey)
             node.removeAction(forKey: jumpKey)
         }
         for name in ["leg_L", "leg_R", "arm_L", "arm_R", "head", "torso"] {
             if let n = character.childNode(withName: name, recursively: false) {
                 n.eulerAngles = .init(0, 0, 0)
+                if name == "torso" {
+                    restoreRestPose(n)
+                }
             }
         }
     }

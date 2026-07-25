@@ -125,10 +125,11 @@ final class CampNode: SCNNode {
         return fillLevel
     }
 
-    /// Extra pour from a helper animal (smaller than a full bucket).
+    /// Extra pour from a helper animal — one deliveryAmount per bucket carried.
     @discardableResult
-    func deliverHelperWater() -> Float {
-        deliverWater(amount: 0.06)
+    func deliverHelperWater(buckets: Int = 1) -> Float {
+        let count = max(0, buckets)
+        return deliverWater(amount: CampNode.deliveryAmount * Float(count))
     }
 
     func canDeliverAtTrough(at worldPosition: SCNVector3) -> Bool {

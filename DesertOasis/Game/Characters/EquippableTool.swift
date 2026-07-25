@@ -3,6 +3,7 @@ import Foundation
 /// Tools the player can equip via the HUD tool button.
 enum EquippableTool: String, Codable, CaseIterable, Identifiable {
     case bucket
+    case magicStick
     case compass
     case detector
     case lantern
@@ -11,25 +12,27 @@ enum EquippableTool: String, Codable, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .bucket:   "Bucket"
-        case .compass:  "Compass"
-        case .detector: "Water Detector"
-        case .lantern:  "Lantern"
+        case .bucket:     "Bucket"
+        case .magicStick: "Magic Stick"
+        case .compass:    "Compass"
+        case .detector:   "Water Detector"
+        case .lantern:    "Lantern"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .bucket:   "drop.fill"
-        case .compass:  "location.north.circle.fill"
-        case .detector: "antenna.radiowaves.left.and.right"
-        case .lantern:  "lantern.fill"
+        case .bucket:     "drop.fill"
+        case .magicStick: "wand.and.stars"
+        case .compass:    "location.north.circle.fill"
+        case .detector:   "antenna.radiowaves.left.and.right"
+        case .lantern:    "lantern.fill"
         }
     }
 
     func isUnlocked(in slot: SaveSlot) -> Bool {
         switch self {
-        case .bucket:   true
+        case .bucket, .magicStick: true
         case .compass:  slot.hasWaterCompass
         case .detector: slot.hasWaterDetector
         case .lantern:  slot.hasLantern

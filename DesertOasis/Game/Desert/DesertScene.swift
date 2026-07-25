@@ -70,7 +70,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     var onSandstormEnded: (() -> Void)?
     var onLandmarkDiscovered: ((LandmarkKind) -> Void)?
     var onPleaMissionExpired: ((String) -> Void)?
-    var onHelperStateChanged: ((String?, Bool) -> Void)?
+    var onHelperStateChanged: ((String?, Int) -> Void)?
     var onPendingRespawnsChanged: (([PendingNPCRespawn]) -> Void)?
     var onWildNPCReturned: ((NPCPersonality) -> Void)?
     var onNearHelperAnimal: ((AnimalNode?) -> Void)?
@@ -399,7 +399,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
            let kind = AnimalKind(rawValue: kindRaw),
            kind.canHelpCarryWater,
            let helper = animals.first(where: { $0.kind == kind && !$0.isFollowingPlayer }) {
-            helper.beginHelping(player: playerNode, carryingWater: slot.isHelperCarryingWater)
+            let buckets = max(slot.helperCarriedBuckets, slot.isHelperCarryingWater ? 1 : 0)
+            helper.beginHelping(player: playerNode, carriedBuckets: buckets)
         }
     }
 
@@ -890,12 +891,16 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
         animal.configureWander(radius: wanderOverride, groundY: { [weak self] wx, wz in
             self?.groundY(x: wx, z: wz) ?? 0
-        }, isBlocked: { [weak self] wx, wz in
+        }, isBlocked: { [weak self, weak animal] wx, wz in
             guard let self else { return true }
-            if self.camps.contains(where: { $0.isInsideTent(worldX: wx, worldZ: wz) }) {
+            let radius = (animal?.kind.colliderRadius ?? 0.35) + 0.08
+            let y = (self.groundY(x: wx, z: wz)) + 0.45
+            // Same solid collision as the player (tent walls + props), not the oversized tent circles.
+            if self.camps.contains(where: { $0.collidesSolid(x: wx, y: y, z: wz, radius: radius) }) {
                 return true
             }
-            if campNode != nil {
+            // Camp animals stay on the pad while wandering, but may leave when following.
+            if campNode != nil, animal?.isFollowingPlayer != true {
                 let dx = wx - cx
                 let dz = wz - cz
                 if sqrt(dx * dx + dz * dz) > padLimit { return true }
@@ -1151,6 +1156,12 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         guard let playerNode else { return }
         let maxDistSq: Float = 85 * 85
         for animal in animals {
+            if animal.isFollowingPlayer {
+                animal.syncFollowMovement(
+                    playerSpeed: playerHorizontalSpeed,
+                    isRunning: isRunning && playerHorizontalSpeed > 0.5 && !isInWater
+                )
+            }
             animal.updateWander(deltaTime: deltaTime)
             let dx = animal.position.x - playerNode.position.x
             let dz = animal.position.z - playerNode.position.z
@@ -1192,7 +1203,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
                 let delta = shortestAngle(from: playerNode.eulerAngles.y, to: targetYaw)
                 let maxTurn = turnSpeed * deltaTime
                 playerNode.eulerAngles.y += max(-maxTurn, min(maxTurn, delta))
-                playerNode.setWalking(true)
+                let runningNow = isRunning && !isInWater
+                playerNode.setWalking(true, running: runningNow)
             } else {
                 playerHorizontalSpeed = 0
                 playerNode.setWalking(false)
@@ -1315,12 +1327,12 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
                 if timer <= 0 {
                     oasisRefillTimers.removeValue(forKey: id)
                     depletedWaterBodies.remove(id)
-                    water.setDepleted(false)
+                    water.refillBuckets()
                 } else {
                     oasisRefillTimers[id] = timer
                 }
             }
-            let isDepleted = depletedWaterBodies.contains(id)
+            let isDepleted = water.isExhausted
             water.update(
                 deltaTime: deltaTime,
                 playerWorldPosition: playerNode.position,
@@ -1330,7 +1342,11 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
                 inside = true
             }
             // Collect from the rim — player usually stands on sand, not in the pool.
-            if !isDepleted && !(toolRig?.isCarryingWater == true),
+            let helperNeedsWater = activeHelperAnimal.map {
+                $0.kind.canHelpCarryWater && $0.carriedBuckets < $0.kind.waterBucketCapacity
+            } ?? false
+            let playerNeedsWater = !(toolRig?.isCarryingWater == true)
+            if !isDepleted && water.remainingBuckets > 0 && (playerNeedsWater || helperNeedsWater),
                water.isNear(worldPosition: playerNode.position) {
                 canCollect = true
             }
@@ -1401,31 +1417,56 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     }
 
     @discardableResult
-    func tryLoadHelperAnimal(_ animal: AnimalNode) -> Bool {
+    func tryLoadHelperAnimal(_ animal: AnimalNode, requireWater: Bool = true) -> Bool {
         guard let playerNode, let toolRig else { return false }
         guard animal.kind.canHelpCarryWater else { return false }
-        guard toolRig.isCarryingWater || animal.isCarryingWater else { return false }
-
-        if animals.contains(where: { $0.isFollowingPlayer && $0.animalID != animal.animalID }) {
-            animals.first { $0.isFollowingPlayer }?.stopHelping()
+        if requireWater {
+            guard toolRig.isCarryingWater || animal.isCarryingWater else { return false }
         }
 
-        let carry = toolRig.isCarryingWater || animal.isCarryingWater
-        // Transfer: if player has water and animal empty, load animal AND keep player water
-        // (helper carries extra). If only animal has water, just follow.
-        if toolRig.isCarryingWater && !animal.isCarryingWater {
-            animal.beginHelping(player: playerNode, carryingWater: true)
-        } else {
-            animal.beginHelping(player: playerNode, carryingWater: animal.isCarryingWater || carry)
+        if let current = animals.first(where: { $0.isFollowingPlayer && $0.animalID != animal.animalID }) {
+            // Can't ditch a loaded companion for another animal.
+            if current.isCarryingWater { return false }
+            _ = current.stopHelping()
         }
-        onHelperStateChanged?(animal.kind.rawValue, animal.isCarryingWater)
+
+        var buckets = animal.carriedBuckets
+        // Only auto-load vessels when explicitly loading with a full player bucket.
+        if requireWater, toolRig.isCarryingWater {
+            buckets = max(buckets, animal.kind.waterBucketCapacity)
+        }
+        animal.beginHelping(player: playerNode, carriedBuckets: buckets)
+        onHelperStateChanged?(animal.kind.rawValue, animal.carriedBuckets)
         return true
     }
 
-    func dismissHelperAnimal() {
-        guard let helper = activeHelperAnimal else { return }
-        helper.stopHelping()
-        onHelperStateChanged?(nil, false)
+    /// Charm a camel/goat to follow using the magic stick (no water required).
+    @discardableResult
+    func tryCharmAnimalWithStick(_ animal: AnimalNode) -> Bool {
+        guard toolRig?.equipped == .magicStick else { return false }
+        return tryLoadHelperAnimal(animal, requireWater: false)
+    }
+
+    /// Fill the following helper's vessels from the player's water (player keeps their bucket).
+    @discardableResult
+    func tryFillHelperFromPlayer() -> Bool {
+        guard let toolRig, toolRig.isCarryingWater,
+              let helper = activeHelperAnimal,
+              helper.kind.canHelpCarryWater,
+              helper.carriedBuckets < helper.kind.waterBucketCapacity
+        else { return false }
+        helper.fillWaterToCapacity()
+        onHelperStateChanged?(helper.kind.rawValue, helper.carriedBuckets)
+        return true
+    }
+
+    /// Dismiss the follower. Fails if it is carrying water.
+    @discardableResult
+    func dismissHelperAnimal() -> Bool {
+        guard let helper = activeHelperAnimal else { return false }
+        guard helper.stopHelping() else { return false }
+        onHelperStateChanged?(nil, 0)
+        return true
     }
 
     private func updateEveningGather() {
@@ -1589,18 +1630,41 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     @discardableResult
     func tryCollectWater(enteredBody: OasisWaterNode? = nil) -> Bool {
-        guard let toolRig, !toolRig.isCarryingWater, let playerNode else { return false }
+        guard let toolRig, let playerNode else { return false }
+        let helper = activeHelperAnimal
+        let playerNeeds = !toolRig.isCarryingWater
+        let helperRoom = helper.map {
+            $0.kind.canHelpCarryWater ? max(0, $0.kind.waterBucketCapacity - $0.carriedBuckets) : 0
+        } ?? 0
+        guard playerNeeds || helperRoom > 0 else { return false }
+
         let body = enteredBody ?? waterBodies.first {
             $0.isNear(worldPosition: playerNode.position) &&
-            !depletedWaterBodies.contains(ObjectIdentifier($0))
+            !$0.isExhausted && $0.remainingBuckets > 0
         }
-        guard let body, !depletedWaterBodies.contains(ObjectIdentifier(body)) else { return false }
+        guard let body, !body.isExhausted, body.remainingBuckets > 0 else { return false }
 
-        toolRig.setCarryingWater(true)
-        let id = ObjectIdentifier(body)
-        depletedWaterBodies.insert(id)
-        oasisRefillTimers[id] = oasisRefillTime
-        body.setDepleted(true)
+        var want = 0
+        if playerNeeds { want += 1 }
+        want += helperRoom
+        let taken = body.takeBuckets(want)
+        guard taken > 0 else { return false }
+
+        var left = taken
+        if playerNeeds, left > 0 {
+            toolRig.setCarryingWater(true)
+            left -= 1
+        }
+        if helperRoom > 0, let helper, left > 0 {
+            helper.setCarriedBuckets(helper.carriedBuckets + left)
+            onHelperStateChanged?(helper.kind.rawValue, helper.carriedBuckets)
+        }
+
+        if body.isExhausted {
+            let id = ObjectIdentifier(body)
+            depletedWaterBodies.insert(id)
+            oasisRefillTimers[id] = oasisRefillTime
+        }
         onWaterCollected?()
         return true
     }
@@ -1620,28 +1684,29 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         guard let toolRig, let playerNode else { return false }
         let helper = activeHelperAnimal
         let playerHas = toolRig.isCarryingWater
-        let helperHas = helper?.isCarryingWater == true
-        guard playerHas || helperHas else { return false }
+        let helperBuckets = helper?.carriedBuckets ?? 0
+        let helperHas = helperBuckets > 0
 
         let nearBarrel = camps.first(where: { $0.canDeliver(at: playerNode.position) })
         let nearTrough = camps.first(where: { $0.canDeliverAtTrough(at: playerNode.position) })
         guard let target = nearBarrel ?? nearTrough else { return false }
+
+        let helperInRange = helper.map {
+            target.canDeliver(at: $0.position) || target.canDeliverAtTrough(at: $0.position)
+        } ?? false
+
+        guard playerHas || (helperHas && helperInRange) else { return false }
 
         var helperBonus = false
         if playerHas {
             toolRig.setCarryingWater(false)
             _ = target.deliverWater()
         }
-        if helperHas, let helper {
-            _ = target.deliverHelperWater()
-            helper.setCarryingWater(false)
-            helper.stopHelping()
-            helperBonus = true
-            onHelperStateChanged?(nil, false)
-        } else if playerHas == false, helperHas, let helper {
-            // Delivered only helper water at trough/barrel
-            helper.stopHelping()
-            onHelperStateChanged?(nil, false)
+        if helperHas, helperInRange, let helper {
+            _ = target.deliverHelperWater(buckets: helperBuckets)
+            helper.setCarriedBuckets(0)
+            // Stay following after pouring — only water is cleared.
+            onHelperStateChanged?(helper.kind.rawValue, 0)
             helperBonus = true
         }
 
@@ -1665,11 +1730,16 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     var canDeliverNow: Bool {
         guard let toolRig, let playerNode else { return false }
-        let hasWater = toolRig.isCarryingWater || (activeHelperAnimal?.isCarryingWater == true)
-        guard hasWater else { return false }
-        return camps.contains {
+        let helper = activeHelperAnimal
+        let target = camps.first {
             $0.canDeliver(at: playerNode.position) || $0.canDeliverAtTrough(at: playerNode.position)
         }
+        guard let target else { return false }
+        if toolRig.isCarryingWater { return true }
+        if let helper, helper.carriedBuckets > 0 {
+            return target.canDeliver(at: helper.position) || target.canDeliverAtTrough(at: helper.position)
+        }
+        return false
     }
 
     var isCarryingWater: Bool { toolRig?.isCarryingWater == true }
@@ -1926,6 +1996,20 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         }
         var nearest: AnimalNode?
         var best = Float.greatestFiniteMagnitude
+
+        // Prefer a following helper that still needs water (Load action).
+        if let helper = activeHelperAnimal,
+           toolRig?.isCarryingWater == true,
+           helper.carriedBuckets < helper.kind.waterBucketCapacity {
+            let dx = helper.position.x - playerNode.position.x
+            let dz = helper.position.z - playerNode.position.z
+            let r = helper.interactionRadius
+            if dx * dx + dz * dz < r * r {
+                nearest = helper
+                best = dx * dx + dz * dz
+            }
+        }
+
         for animal in animals where animal.kind.canHelpCarryWater && !animal.isFollowingPlayer {
             let dx = animal.position.x - playerNode.position.x
             let dz = animal.position.z - playerNode.position.z

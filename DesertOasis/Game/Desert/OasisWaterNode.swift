@@ -30,6 +30,11 @@ final class OasisWaterNode: SCNNode {
     private let volumeMaterial = SCNMaterial()
     private var splashTemplate: SCNParticleSystem!
     private var isDepleted = false
+    /// How many buckets this pool can hold when full (1…3 from radius).
+    let bucketCapacity: Int
+    /// Buckets still available to collect.
+    private(set) var remainingBuckets: Int
+    var isExhausted: Bool { remainingBuckets <= 0 }
 
     private let mudMaterial: SCNMaterial = {
         let m = SCNMaterial()
@@ -58,6 +63,8 @@ final class OasisWaterNode: SCNNode {
         self.radius = radius
         self.oasisWorldX = oasisWorldX
         self.oasisWorldZ = oasisWorldZ
+        self.bucketCapacity = Self.bucketCapacity(forRadius: radius)
+        self.remainingBuckets = self.bucketCapacity
         self.cellSize = VoxelMetrics.blockSize
         let bs = VoxelMetrics.blockSize
         self.centerBlockX = Int(floor(oasisWorldX / bs))
@@ -114,6 +121,29 @@ final class OasisWaterNode: SCNNode {
         }
         let reach = margin + cellSize * 0.55
         return best <= reach * reach
+    }
+
+    /// Small pools hold 1 bucket; medium 2; large 3.
+    static func bucketCapacity(forRadius radius: Float) -> Int {
+        if radius < 3.0 { return 1 }
+        if radius < 3.8 { return 2 }
+        return 3
+    }
+
+    /// Draw up to `count` buckets. Returns how many were actually taken.
+    @discardableResult
+    func takeBuckets(_ count: Int) -> Int {
+        let taken = max(0, min(count, remainingBuckets))
+        remainingBuckets -= taken
+        if remainingBuckets <= 0 {
+            setDepleted(true)
+        }
+        return taken
+    }
+
+    func refillBuckets() {
+        remainingBuckets = bucketCapacity
+        setDepleted(false)
     }
 
     func setDepleted(_ depleted: Bool) {

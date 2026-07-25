@@ -35,6 +35,8 @@ struct SaveSlot: Codable, Identifiable {
     var helpedLost: Int
     var helperAnimalKind: String?
     var isHelperCarryingWater: Bool
+    /// Buckets the following helper is carrying (0…animal capacity). Preferred over the bool.
+    var helperCarriedBuckets: Int
     var sleepsCompleted: Int
     var pendingWildNPCRespawns: [PendingNPCRespawn]
     var discoveredLandmarks: [String]
@@ -78,6 +80,7 @@ struct SaveSlot: Codable, Identifiable {
         helpedLost = 0
         helperAnimalKind = nil
         isHelperCarryingWater = false
+        helperCarriedBuckets = 0
         sleepsCompleted = 0
         pendingWildNPCRespawns = []
         discoveredLandmarks = []
@@ -140,7 +143,7 @@ struct SaveSlot: Codable, Identifiable {
         case timeOfDay, campProgress, missions
         case equippedTool, hasLantern, tradeBeads, trinkets
         case achievements, diaryPages, helpedWanderers, helpedLost
-        case helperAnimalKind, isHelperCarryingWater, sleepsCompleted
+        case helperAnimalKind, isHelperCarryingWater, helperCarriedBuckets, sleepsCompleted
         case pendingWildNPCRespawns, discoveredLandmarks
         case hasCampTrinket, mapScrapsOwned
     }
@@ -181,6 +184,12 @@ struct SaveSlot: Codable, Identifiable {
         helpedLost = try c.decodeIfPresent(Int.self, forKey: .helpedLost) ?? 0
         helperAnimalKind = try c.decodeIfPresent(String.self, forKey: .helperAnimalKind)
         isHelperCarryingWater = try c.decodeIfPresent(Bool.self, forKey: .isHelperCarryingWater) ?? false
+        if let buckets = try c.decodeIfPresent(Int.self, forKey: .helperCarriedBuckets) {
+            helperCarriedBuckets = max(0, buckets)
+        } else {
+            helperCarriedBuckets = isHelperCarryingWater ? 1 : 0
+        }
+        isHelperCarryingWater = helperCarriedBuckets > 0
         sleepsCompleted = try c.decodeIfPresent(Int.self, forKey: .sleepsCompleted) ?? 0
         pendingWildNPCRespawns = try c.decodeIfPresent([PendingNPCRespawn].self, forKey: .pendingWildNPCRespawns) ?? []
         discoveredLandmarks = try c.decodeIfPresent([String].self, forKey: .discoveredLandmarks) ?? []
