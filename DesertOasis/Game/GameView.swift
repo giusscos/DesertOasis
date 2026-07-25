@@ -196,6 +196,10 @@ struct GameView: View {
                         setPaused(false)
                         isShowingAchievements = true
                     },
+                    onLeaderboards: {
+                        setPaused(false)
+                        gameManager.gameCenter.presentDashboard()
+                    },
                     onExitToCamp: {
                         setPaused(false)
                         gameManager.currentScreen = .slotSelection
@@ -484,6 +488,9 @@ struct GameView: View {
             tradeBeads = slot.tradeBeads
             equippedTool = EquippableTool.resolved(slot.equippedTool, slot: slot)
             achievementManager.load(from: slot.achievements)
+            achievementManager.onUnlock = { id in
+                gameManager.gameCenter.reportAchievement(id: id)
+            }
             let home = slot.progress(forCampId: "home")
             oasisStage = OasisGrowthStage(rawValue: home.oasisStage) ?? .barren
             oasisProgress = home.oasisProgress
@@ -1617,6 +1624,7 @@ struct PauseOverlay: View {
     var onResume: () -> Void
     var onDiary: () -> Void
     var onAchievements: () -> Void
+    var onLeaderboards: () -> Void
     var onExitToCamp: () -> Void
 
     var body: some View {
@@ -1661,6 +1669,16 @@ struct PauseOverlay: View {
 
                     Button(action: onAchievements) {
                         Text("Achievements")
+                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: 260)
+                            .padding(.vertical, 12)
+                            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: onLeaderboards) {
+                        Label("Leaderboards", systemImage: "chart.bar.fill")
                             .font(.system(size: 15, weight: .semibold, design: .serif))
                             .foregroundStyle(.white)
                             .frame(maxWidth: 260)

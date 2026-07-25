@@ -25,6 +25,7 @@ final class AchievementManager {
     ]
 
     private(set) var unlocked: Set<String> = []
+    @ObservationIgnored var onUnlock: ((String) -> Void)?
 
     func load(from ids: [String]) {
         unlocked = Set(ids)
@@ -40,6 +41,7 @@ final class AchievementManager {
         guard !unlocked.contains(id),
               let def = Self.catalog.first(where: { $0.id == id }) else { return nil }
         unlocked.insert(id)
+        onUnlock?(id)
         return def
     }
 

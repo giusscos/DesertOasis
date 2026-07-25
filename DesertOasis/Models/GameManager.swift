@@ -23,8 +23,19 @@ final class GameManager {
     private let soundKey = "DesertOasis_Sound"
     private let skyDetailsKey = "DesertOasis_SkyDetails"
 
+    var gameCenter = GameCenterManager()
+    @ObservationIgnored private var kvStoreObserver: NSObjectProtocol?
+
     init() {
         loadAll()
+        gameCenter.authenticate()
+        kvStoreObserver = NotificationCenter.default.addObserver(
+            forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: NSUbiquitousKeyValueStore.default,
+            queue: .main
+        ) { [weak self] _ in
+            self?.reloadSlotsFromCloud()
+        }
     }
 
     // MARK: - Persistence
@@ -33,21 +44,39 @@ final class GameManager {
         musicEnabled = UserDefaults.standard.object(forKey: musicKey) as? Bool ?? true
         soundEnabled = UserDefaults.standard.object(forKey: soundKey) as? Bool ?? true
         skyDetailsEnabled = UserDefaults.standard.object(forKey: skyDetailsKey) as? Bool ?? true
-        guard let data = UserDefaults.standard.data(forKey: slotsKey),
-              let slots = try? JSONDecoder().decode([SaveSlot].self, from: data)
-        else { return }
-        saveSlots = slots
+        let kvStore = NSUbiquitousKeyValueStore.default
+        kvStore.synchronize()
+        if let data = kvStore.data(forKey: slotsKey),
+           let slots = try? JSONDecoder().decode([SaveSlot].self, from: data) {
+            saveSlots = slots
+        } else if let data = UserDefaults.standard.data(forKey: slotsKey),
+                  let slots = try? JSONDecoder().decode([SaveSlot].self, from: data) {
+            // One-time migration from UserDefaults on first launch.
+            saveSlots = slots
+            persistSlots()
+        }
     }
 
     func persistSlots() {
         guard let data = try? JSONEncoder().encode(saveSlots) else { return }
-        UserDefaults.standard.set(data, forKey: slotsKey)
+        NSUbiquitousKeyValueStore.default.set(data, forKey: slotsKey)
+        NSUbiquitousKeyValueStore.default.synchronize()
     }
 
     func persistSettings() {
         UserDefaults.standard.set(musicEnabled, forKey: musicKey)
         UserDefaults.standard.set(soundEnabled, forKey: soundKey)
         UserDefaults.standard.set(skyDetailsEnabled, forKey: skyDetailsKey)
+    }
+
+    private func reloadSlotsFromCloud() {
+        guard let data = NSUbiquitousKeyValueStore.default.data(forKey: slotsKey),
+              let synced = try? JSONDecoder().decode([SaveSlot].self, from: data)
+        else { return }
+        for (i, slot) in synced.enumerated() {
+            if case .playing(let activeIdx) = currentScreen, activeIdx == i { continue }
+            saveSlots[i] = slot
+        }
     }
 
     // MARK: - Slot actions
@@ -108,7 +137,10 @@ final class GameManager {
         nextCampHint: String? = nil
     ) {
         if let w = waterFound       { saveSlots[slotIndex].waterFound       = w }
-        if let o = oasisFound       { saveSlots[slotIndex].oasisFound       = o }
+        if let o = oasisFound {
+            saveSlots[slotIndex].oasisFound = o
+            gameCenter.submitScore(o, toLeaderboard: GameCenterManager.Leaderboard.oasesFound)
+        }
         if let t = tasksCompleted   { saveSlots[slotIndex].tasksCompleted   = t }
         if let c = campWaterLevel   {
             saveSlots[slotIndex].campWaterLevel = c
@@ -116,7 +148,10 @@ final class GameManager {
             home.waterLevel = c
             saveSlots[slotIndex].upsertCampProgress(home)
         }
-        if let d = waterDeliveries  { saveSlots[slotIndex].waterDeliveries  = d }
+        if let d = waterDeliveries {
+            saveSlots[slotIndex].waterDeliveries = d
+            gameCenter.submitScore(d, toLeaderboard: GameCenterManager.Leaderboard.waterDeliveries)
+        }
         if let carrying = isCarryingWater { saveSlots[slotIndex].isCarryingWater = carrying }
         if let compass = hasWaterCompass { saveSlots[slotIndex].hasWaterCompass = compass }
         if let detector = hasWaterDetector { saveSlots[slotIndex].hasWaterDetector = detector }
@@ -131,7 +166,10 @@ final class GameManager {
         if let tr = trinkets        { saveSlots[slotIndex].trinkets = tr }
         if let ach = achievements   { saveSlots[slotIndex].achievements = ach }
         if let dp = diaryPages      { saveSlots[slotIndex].diaryPages = dp }
-        if let hw = helpedWanderers { saveSlots[slotIndex].helpedWanderers = hw }
+        if let hw = helpedWanderers {
+            saveSlots[slotIndex].helpedWanderers = hw
+            gameCenter.submitScore(hw, toLeaderboard: GameCenterManager.Leaderboard.wanderers)
+        }
         if let hlost = helpedLost   { saveSlots[slotIndex].helpedLost = hlost }
         if clearHelperAnimal {
             saveSlots[slotIndex].helperAnimalKind = nil
