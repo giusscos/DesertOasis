@@ -104,7 +104,8 @@ final class GameManager {
         pendingWildNPCRespawns: [PendingNPCRespawn]? = nil,
         discoveredLandmarks: [String]? = nil,
         hasCampTrinket: Bool? = nil,
-        mapScrapsOwned: Int? = nil
+        mapScrapsOwned: Int? = nil,
+        nextCampHint: String? = nil
     ) {
         if let w = waterFound       { saveSlots[slotIndex].waterFound       = w }
         if let o = oasisFound       { saveSlots[slotIndex].oasisFound       = o }
@@ -153,6 +154,7 @@ final class GameManager {
         if let dl = discoveredLandmarks { saveSlots[slotIndex].discoveredLandmarks = dl }
         if let ct = hasCampTrinket  { saveSlots[slotIndex].hasCampTrinket = ct }
         if let ms = mapScrapsOwned  { saveSlots[slotIndex].mapScrapsOwned = ms }
+        if let hint = nextCampHint  { saveSlots[slotIndex].nextCampHint = hint }
         saveSlots[slotIndex].lastUpdated = Date()
         persistSlots()
     }

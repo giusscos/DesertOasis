@@ -275,9 +275,17 @@ struct GameView: View {
                     mission: offer,
                     onAccept: {
                         missionManager.unlock(offer.id)
+                        if offer.id == "another_camping_zone",
+                           slot.campProgress.contains(where: { $0.id != "home" }) {
+                            missionManager.complete("another_camping_zone")
+                        }
                         saveMissions()
                         withAnimation(.spring(duration: 0.35)) { pendingMissionOffer = nil }
-                        showToast("Mission accepted: \(offer.title)")
+                        if offer.id == "another_camping_zone", let hint = slot.nextCampHint {
+                            showToast("Accepted — compass shows north; walk \(hint).")
+                        } else {
+                            showToast("Mission accepted: \(offer.title)")
+                        }
                     },
                     onDismiss: {
                         deniedMissionOffers.insert(offer.id)
@@ -501,6 +509,15 @@ struct GameView: View {
             if oasisStage == .lush  { missionManager.complete("oasis_remembers") }
             if oasisStage >= .pond  { missionManager.complete("ancient_trial") }
             if slot.waterDeliveries >= 5 { missionManager.complete("merchants_route") }
+            if oasisStage >= .flourishing {
+                refreshNextCampHint()
+                grantLanternIfNeeded(announce: false)
+                missionManager.unlock("another_camping_zone")
+                if slot.campProgress.contains(where: { $0.id != "home" }) {
+                    missionManager.complete("another_camping_zone")
+                }
+            }
+            applyMissionBodyOverrides()
             saveMissions()
 
             // Show cinematic intro for brand-new saves.
@@ -520,10 +537,12 @@ struct GameView: View {
 
             // Wire the NPC mission-offer callback on DialogueManager.
             dialogueManager.onConversationStarted = { npc in
-                guard let offerId = npc.personality.missionOffer,
+                let situation = self.makeCampSituation(helpCount: npc.helpCount)
+                guard let offerId = npc.personality.missionOffer(for: situation),
                       !missionManager.isUnlocked(offerId),
                       !deniedMissionOffers.contains(offerId),
-                      let def = MissionManager.catalog.first(where: { $0.id == offerId })
+                      let def = missionManager.definition(for: offerId)
+                        ?? MissionManager.catalog.first(where: { $0.id == offerId })
                 else { return }
                 Task {
                     try? await Task.sleep(for: .milliseconds(700))
@@ -1025,7 +1044,11 @@ struct GameView: View {
                 }
                 persistCamp(campId)
                 if advanced {
-                    showToast("The oasis grows — \(stage.displayName)!")
+                    if campId == "home", stage == .flourishing {
+                        handleHomeOasisFlourished()
+                    } else {
+                        showToast("The oasis grows — \(stage.displayName)!")
+                    }
                 }
             }
         }
@@ -1042,6 +1065,12 @@ struct GameView: View {
             } else {
                 missionManager.unlock("beyond_horizon")
             }
+            if missionManager.isActive("another_camping_zone") {
+                missionManager.complete("another_camping_zone")
+                showToast("Mission complete: Another Camping Zone")
+            }
+            refreshNextCampHint()
+            applyMissionBodyOverrides()
             saveMissions()
         }
 
@@ -1191,20 +1220,7 @@ struct GameView: View {
         }
         dialogueManager.startConversation(
             with: npc,
-            situation: CampSituation(
-                campWaterLevel: campWaterLevel,
-                waterDeliveries: slot.waterDeliveries,
-                oasisFound: slot.oasisFound,
-                isCarryingWater: carryingWater,
-                hasCompass: slot.hasWaterCompass,
-                hasDetector: slot.hasWaterDetector,
-                playerName: slot.playerName,
-                oasisStageName: oasisStage.displayName.lowercased(),
-                oasisProgress: oasisProgress,
-                tradeBeads: tradeBeads,
-                helpCount: npc.helpCount,
-                hasLantern: slot.hasLantern
-            )
+            situation: makeCampSituation(helpCount: npc.helpCount)
         )
     }
 
@@ -1410,6 +1426,83 @@ struct GameView: View {
         gameManager.updateProgress(slotIndex: slotIndex, diaryPages: pages)
         if Set(pages).isSuperset(of: Set(DiaryCatalog.allIDs)) {
             unlockAchievement("all_diary")
+        }
+    }
+
+    private func makeCampSituation(helpCount: Int = 0) -> CampSituation {
+        CampSituation(
+            campWaterLevel: campWaterLevel,
+            waterDeliveries: slot.waterDeliveries,
+            oasisFound: slot.oasisFound,
+            isCarryingWater: carryingWater,
+            hasCompass: slot.hasWaterCompass,
+            hasDetector: slot.hasWaterDetector,
+            playerName: slot.playerName,
+            oasisStageName: oasisStage.displayName.lowercased(),
+            oasisProgress: oasisProgress,
+            tradeBeads: tradeBeads,
+            helpCount: helpCount,
+            hasLantern: slot.hasLantern,
+            oasisStageRaw: oasisStage.rawValue,
+            nextCampHint: slot.nextCampHint
+        )
+    }
+
+    private func refreshNextCampHint() {
+        let discovered = Set(slot.campProgress.map(\.id))
+        guard let site = CampSiteGenerator.nearestUndiscoveredRemote(
+            seed: slot.desertSeed,
+            discoveredIDs: discovered
+        ) else {
+            missionManager.setBodyOverride(nil, for: "another_camping_zone")
+            return
+        }
+        let hint = CampSiteGenerator.poeticCompassHint(toward: site)
+        gameManager.updateProgress(slotIndex: slotIndex, nextCampHint: hint)
+        applyMissionBodyOverrides()
+    }
+
+    private func applyMissionBodyOverrides() {
+        guard let hint = slot.nextCampHint, !hint.isEmpty else { return }
+        let body = "The elder speaks of another camping zone. Take your compass and walk \(hint) — the dunes will not shout the path. Find the camp and help restore its oasis."
+        missionManager.setBodyOverride(body, for: "another_camping_zone")
+    }
+
+    /// Home oasis reached flourishing — lantern unlock + prompt to seek another camp.
+    private func handleHomeOasisFlourished() {
+        refreshNextCampHint()
+        let newlyUnlockedLantern = !slot.hasLantern
+        grantLanternIfNeeded(announce: false)
+        applyMissionBodyOverrides()
+
+        missionManager.unlock("another_camping_zone")
+        if slot.campProgress.contains(where: { $0.id != "home" }) {
+            missionManager.complete("another_camping_zone")
+        }
+        saveMissions()
+
+        let hint = slot.nextCampHint
+        if newlyUnlockedLantern {
+            selectTool(.lantern)
+            if let hint, !hint.isEmpty, missionManager.isActive("another_camping_zone") {
+                showToast("Flourishing! Lantern unlocked. Compass shows north — walk \(hint).")
+            } else {
+                showToast("Oasis flourishing! Lantern unlocked — explore at night.")
+            }
+        } else if let hint, !hint.isEmpty, missionManager.isActive("another_camping_zone") {
+            showToast("Flourishing! Compass shows north — walk \(hint).")
+        } else {
+            showToast("The oasis flourishes.")
+        }
+    }
+
+    private func grantLanternIfNeeded(announce: Bool) {
+        guard !slot.hasLantern else { return }
+        desertScene.unlockLantern()
+        gameManager.updateProgress(slotIndex: slotIndex, hasLantern: true)
+        if announce {
+            selectTool(.lantern)
+            showToast("Lantern unlocked — equip it to see in the dark.")
         }
     }
 

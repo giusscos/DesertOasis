@@ -42,6 +42,8 @@ struct SaveSlot: Codable, Identifiable {
     var discoveredLandmarks: [String]
     var hasCampTrinket: Bool
     var mapScrapsOwned: Int
+    /// Poetic compass hint for the post-flourish “another camping zone” mission.
+    var nextCampHint: String?
 
     var isEmpty: Bool { characterGender == nil }
 
@@ -86,6 +88,7 @@ struct SaveSlot: Codable, Identifiable {
         discoveredLandmarks = []
         hasCampTrinket = false
         mapScrapsOwned = 0
+        nextCampHint = nil
     }
 
     static func timestampName(from date: Date) -> String {
@@ -145,7 +148,7 @@ struct SaveSlot: Codable, Identifiable {
         case achievements, diaryPages, helpedWanderers, helpedLost
         case helperAnimalKind, isHelperCarryingWater, helperCarriedBuckets, sleepsCompleted
         case pendingWildNPCRespawns, discoveredLandmarks
-        case hasCampTrinket, mapScrapsOwned
+        case hasCampTrinket, mapScrapsOwned, nextCampHint
     }
 
     init(from decoder: Decoder) throws {
@@ -195,6 +198,7 @@ struct SaveSlot: Codable, Identifiable {
         discoveredLandmarks = try c.decodeIfPresent([String].self, forKey: .discoveredLandmarks) ?? []
         hasCampTrinket = try c.decodeIfPresent(Bool.self, forKey: .hasCampTrinket) ?? false
         mapScrapsOwned = try c.decodeIfPresent(Int.self, forKey: .mapScrapsOwned) ?? 0
+        nextCampHint = try c.decodeIfPresent(String.self, forKey: .nextCampHint)
     }
 }
 

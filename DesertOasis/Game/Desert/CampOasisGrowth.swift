@@ -46,6 +46,8 @@ final class CampOasisGrowthNode: SCNNode {
     private var poolWater: OasisWaterNode?
     private var plantNodes: [SCNNode] = []
     private var palmNodes: [SCNNode] = []
+    /// Extra greenzone flora that only appears once flourishing.
+    private var outerFloraNodes: [SCNNode] = []
 
     /// Water taken from the barrel per irrigation tick.
     static let waterPerTick: Float = 0.018
@@ -59,6 +61,7 @@ final class CampOasisGrowthNode: SCNNode {
         buildWetPatch()
         buildPlants()
         buildPalms()
+        buildOuterFlora()
         applyVisual(animated: false)
     }
 
@@ -150,7 +153,7 @@ final class CampOasisGrowthNode: SCNNode {
         let plantAngles: [Float] = [0.35, 1.2, 2.1, 3.5, 4.3, 5.4]
         for (i, angle) in plantAngles.enumerated() {
             let dist = r * 1.12
-            let plant = makePlant()
+            let plant = i % 2 == 0 ? makePlant() : makeLeafyBush()
             plant.name = "growth_plant_\(i)"
             plant.position = SCNVector3(cos(angle) * dist, 0, sin(angle) * dist)
             plant.isHidden = true
@@ -172,14 +175,49 @@ final class CampOasisGrowthNode: SCNNode {
             (5.45, r * 1.38, 0.7),
         ]
         for (i, spec) in palmSpecs.enumerated() {
-            let palm = makePalm()
-            palm.name = "growth_palm_\(i)"
-            palm.position = SCNVector3(cos(spec.0) * spec.1, 0, sin(spec.0) * spec.1)
-            palm.eulerAngles.y = spec.2
-            palm.isHidden = true
-            palm.scale = SCNVector3(0.01, 0.01, 0.01)
-            addChildNode(palm)
-            palmNodes.append(palm)
+            let tree: SCNNode
+            switch i % 3 {
+            case 0: tree = makePalm()
+            case 1: tree = makeYoungPalm()
+            default: tree = makePalm()
+            }
+            tree.name = "growth_palm_\(i)"
+            tree.position = SCNVector3(cos(spec.0) * spec.1, 0, sin(spec.0) * spec.1)
+            tree.eulerAngles.y = spec.2
+            tree.isHidden = true
+            tree.scale = SCNVector3(0.01, 0.01, 0.01)
+            addChildNode(tree)
+            palmNodes.append(tree)
+        }
+    }
+
+    /// Wider greenzone toward the open desert (−Z from hub) — avoids barrel / tents.
+    private func buildOuterFlora() {
+        let r = Self.poolRadius
+        // Angles bias toward open desert (around π…2π / negative Z), not the SE barrel.
+        let specs: [(angle: Float, dist: Float, kind: Int)] = [
+            (2.55, r * 1.72, 0),
+            (3.05, r * 1.90, 1),
+            (3.55, r * 1.78, 2),
+            (4.05, r * 1.95, 0),
+            (4.55, r * 1.70, 1),
+            (5.10, r * 1.88, 2),
+            (5.60, r * 1.75, 0),
+        ]
+        for (i, spec) in specs.enumerated() {
+            let node: SCNNode
+            switch spec.kind {
+            case 0: node = makeLeafyBush()
+            case 1: node = makeYoungPalm()
+            default: node = makePlant()
+            }
+            node.name = "growth_outer_\(i)"
+            node.position = SCNVector3(cos(spec.angle) * spec.dist, 0, sin(spec.angle) * spec.dist)
+            node.eulerAngles.y = Float(i) * 0.7
+            node.isHidden = true
+            node.scale = SCNVector3(0.01, 0.01, 0.01)
+            addChildNode(node)
+            outerFloraNodes.append(node)
         }
     }
 
@@ -193,36 +231,65 @@ final class CampOasisGrowthNode: SCNNode {
         return root
     }
 
+    private func makeLeafyBush() -> SCNNode {
+        let root = SCNNode()
+        let s = VoxelSculpture(sizeX: 10, sizeY: 10, sizeZ: 10,
+                               origin: SIMD3<Float>(-5, 0, -5) * VoxelMetrics.unit)
+        s.fillSphere(cx: 5, cy: 3, cz: 5, r: 3.2, type: .leaf)
+        s.fillSphere(cx: 3.5, cy: 4.5, cz: 5.5, r: 2.4, type: .leaf)
+        s.fillSphere(cx: 6.5, cy: 4.2, cz: 4.2, r: 2.2, type: .leaf)
+        s.fillCylinder(c0: 5, c1: 5, a0: 0, a1: 3, radius: 0.7, type: .wood)
+        root.addChildNode(s.makeNode(name: "bush_mesh"))
+        root.scale = SCNVector3(0.9, 0.9, 0.9)
+        return root
+    }
+
     private func makePalm() -> SCNNode {
         let palm = VoxelPropBuilder.palmTree()
         palm.scale = SCNVector3(0.85, 0.85, 0.85)
         return palm
     }
 
+    private func makeYoungPalm() -> SCNNode {
+        let palm = VoxelPropBuilder.palmTree()
+        palm.scale = SCNVector3(0.55, 0.62, 0.55)
+        return palm
+    }
+
     private func applyVisual(animated: Bool) {
         let bankVisible = stage >= .damp
-        let bankScale: Float = stage == .damp ? 0.55 + progress * 0.35
-            : stage == .puddle ? 0.9 + progress * 0.12
-            : 1.0
+        let bankScale: Float
+        switch stage {
+        case .damp: bankScale = 0.55 + progress * 0.35
+        case .puddle: bankScale = 0.9 + progress * 0.12
+        case .pond, .lush: bankScale = 1.0
+        case .flourishing: bankScale = 1.28
+        default: bankScale = 0.01
+        }
         setNode(bankNode, visible: bankVisible, scale: bankScale, animated: animated, flattenY: true)
 
         let wetVisible = stage >= .damp
-        let wetScale = stage == .damp ? 0.5 + progress * 0.35
-            : stage == .puddle ? 0.9 + progress * 0.1
-            : 1.0
+        let wetScale: Float
+        switch stage {
+        case .damp: wetScale = 0.5 + progress * 0.35
+        case .puddle: wetScale = 0.9 + progress * 0.1
+        case .pond, .lush: wetScale = 1.0
+        case .flourishing: wetScale = 1.28
+        default: wetScale = 0.01
+        }
         setNode(wetPatch, visible: wetVisible, scale: wetScale, animated: animated, flattenY: true)
 
         let waterVisible = stage >= .puddle
         if let poolWater {
             let applyWater = {
                 poolWater.isHidden = !waterVisible
-                // Grow from a small puddle up to full wild-pool size.
+                // Grow from a small puddle up to full wild-pool size, then expand at flourish.
                 let s: Float
                 switch self.stage {
                 case .puddle: s = 0.35 + self.progress * 0.4
                 case .pond:   s = 0.75 + self.progress * 0.25
                 case .lush:   s = 1.0
-                case .flourishing: s = 1.0
+                case .flourishing: s = 1.22
                 default: s = 0.01
                 }
                 poolWater.scale = SCNVector3(s, 1, s)
@@ -244,7 +311,7 @@ final class CampOasisGrowthNode: SCNNode {
         switch stage {
         case .pond: plantScale = 0.4 + progress * 0.6
         case .lush: plantScale = 1.0
-        case .flourishing: plantScale = 1.15
+        case .flourishing: plantScale = 1.2
         default: plantScale = 0.01
         }
         for plant in plantNodes {
@@ -254,7 +321,7 @@ final class CampOasisGrowthNode: SCNNode {
         let palmVisible = stage >= .lush || (stage == .pond && progress > 0.55)
         let palmScale: Float
         if stage == .flourishing {
-            palmScale = 1.0
+            palmScale = 1.08
         } else if stage == .lush {
             palmScale = 0.72 + progress * 0.28
         } else if stage == .pond && progress > 0.55 {
@@ -267,6 +334,12 @@ final class CampOasisGrowthNode: SCNNode {
             let show = palmVisible && palmScale > 0.05 && (!extra || stage >= .flourishing)
             let scale = extra && stage == .flourishing ? palmScale * 0.88 : palmScale
             setNode(palm, visible: show, scale: max(0.01, scale), animated: animated)
+        }
+
+        let outerVisible = stage >= .flourishing
+        for (i, flora) in outerFloraNodes.enumerated() {
+            let scale: Float = outerVisible ? (0.75 + Float(i % 3) * 0.12) : 0.01
+            setNode(flora, visible: outerVisible, scale: scale, animated: animated)
         }
     }
 

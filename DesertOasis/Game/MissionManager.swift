@@ -82,9 +82,17 @@ final class MissionManager {
             body: "Landmark waters still hide in the dunes. Seek a shrine spring, mirrored pool, or canyon well.",
             isNPCOffered: false
         ),
+        .init(
+            id: "another_camping_zone",
+            title: "Another Camping Zone",
+            body: "The elder speaks of another camping zone beyond home. Take your compass and walk the path they whispered — the dunes will not shout it. Find the camp and help restore its oasis.",
+            isNPCOffered: true
+        ),
     ]
 
     private(set) var records: [MissionRecord] = []
+    /// Dynamic mission text (e.g. compass direction hint for another camping zone).
+    private(set) var bodyOverrides: [String: String] = [:]
 
     var hasNewMissions: Bool { records.contains { $0.isNew } }
 
@@ -96,10 +104,27 @@ final class MissionManager {
 
     var exportedRecords: [MissionRecord] { records }
 
+    func setBodyOverride(_ body: String?, for id: String) {
+        if let body, !body.isEmpty {
+            bodyOverrides[id] = body
+        } else {
+            bodyOverrides.removeValue(forKey: id)
+        }
+    }
+
     // MARK: - Queries
 
     func definition(for id: String) -> MissionDefinition? {
-        Self.catalog.first { $0.id == id }
+        guard let base = Self.catalog.first(where: { $0.id == id }) else { return nil }
+        if let override = bodyOverrides[id] {
+            return MissionDefinition(
+                id: base.id,
+                title: base.title,
+                body: override,
+                isNPCOffered: base.isNPCOffered
+            )
+        }
+        return base
     }
 
     func isUnlocked(_ id: String) -> Bool {
@@ -117,19 +142,19 @@ final class MissionManager {
     var active: [MissionDefinition] {
         records
             .filter { $0.status == .active }
-            .compactMap { r in Self.catalog.first { $0.id == r.id } }
+            .compactMap { definition(for: $0.id) }
     }
 
     var completed: [MissionDefinition] {
         records
             .filter { $0.status == .completed }
-            .compactMap { r in Self.catalog.first { $0.id == r.id } }
+            .compactMap { definition(for: $0.id) }
     }
 
     var failed: [MissionDefinition] {
         records
             .filter { $0.status == .failed }
-            .compactMap { r in Self.catalog.first { $0.id == r.id } }
+            .compactMap { definition(for: $0.id) }
     }
 
     // MARK: - Mutations

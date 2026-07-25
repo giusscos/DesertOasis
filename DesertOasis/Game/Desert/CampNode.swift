@@ -361,7 +361,7 @@ final class CampNode: SCNNode {
     private func buildHomeCamp(world: VoxelWorld) {
         // Same shell as the title screen lobby tent.
         let tent = VoxelPropBuilder.lobbyTentShell()
-        // Entrance faces camp center (−Z after yaw π). Sit slightly north of the fire ring.
+        // Entrance faces camp center (−Z after yaw π). Fire sits in the plaza south of the door.
         tent.position = SCNVector3(0, 0, 5.5)
         tent.eulerAngles.y = Float.pi
         addChildNode(tent)
@@ -485,7 +485,8 @@ final class CampNode: SCNNode {
 
     private func buildCampfire() {
         campfireNode = VoxelPropBuilder.campfire()
-        campfireNode.position = SCNVector3(-2.2, 0, 0.4)
+        // Plaza just outside the main tent entrance (−Z), offset so the doorway stays clear.
+        campfireNode.position = SCNVector3(-2.0, 0, -3.0)
         addChildNode(campfireNode)
     }
 

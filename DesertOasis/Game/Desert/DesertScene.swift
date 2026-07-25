@@ -18,6 +18,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var spawnedCampIDs: Set<String> = []
     private var placedOasisKeys: Set<String> = []
     private var slotCampProgress: [String: CampProgress] = [:]
+    /// Chunks that already received streamed desert props (cx/cz packed).
+    private var streamDecoratedChunks: Set<Int> = []
 
     let cameraNode = SCNNode()
     let cameraArmNode = SCNNode()
@@ -117,7 +119,10 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var campSpawnPhase: CampSpawnPhase?
     private var queuedCampSites: [CampSite] = []
     private let campPrepChunksPerFrame = 3
-    private let campDiscoverRadius: Float = 52
+    /// Base discovery distance — past fog haze but still requires closing in.
+    private let campDiscoverRadius: Float = 80
+    /// When the player holds the home→camp bearing, allow a wider find radius.
+    private let campDiscoverRadiusOnBearing: Float = 115
 
     // Progressive world build
     private(set) var isBuildingWorld = false
@@ -162,7 +167,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
         buildGenerator = VoxelWorldGenerator(seed: slot.desertSeed, campSites: campSites)
         // Initial ring around home — rest streams as the player explores.
-        pendingChunkCoords = voxelWorld.chunkCoordinatesFromCenter(radiusChunks: 10)
+        pendingChunkCoords = voxelWorld.chunkCoordinatesFromCenter(radiusChunks: 13)
         buildChunkIndex = 0
 
         setupOverviewCamera()
@@ -208,9 +213,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         guard let slot = buildSlot, let generator = buildGenerator else { return }
 
         let homeSites = campSites.filter(\.isHome)
-        let ring1 = campSites.filter { !$0.isHome }.prefix(4)
-        let initialSites = homeSites + Array(ring1)
-        oases = generator.placeAndCarveOases(into: voxelWorld, nearSites: initialSites, oasisCount: 8)
+        // Only place around home at start — remote camp oases wait for discovery (and sit farther out).
+        oases = generator.placeAndCarveOases(into: voxelWorld, nearSites: homeSites, oasisCount: 5)
         for oasis in oases {
             placedOasisKeys.insert(oasisKey(oasis))
         }
@@ -1126,7 +1130,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     /// Hide all camp nodes beyond the fog rim.
     private func updateCampVisibility(playerPosition: SCNVector3) {
-        let maxDistSq: Float = 85 * 85
+        let maxDistSq: Float = 130 * 130
         for campNode in camps {
             let dx = campNode.position.x - playerPosition.x
             let dz = campNode.position.z - playerPosition.z
@@ -1872,19 +1876,78 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             if voxelWorld.hasGeneratedChunk(cx: coord.cx, cz: coord.cz) { continue }
             generator.generateChunk(into: voxelWorld, cx: coord.cx, cz: coord.cz)
             voxelWorld.remeshChunk(cx: coord.cx, cz: coord.cz, animated: true)
+            decorateStreamedChunk(cx: coord.cx, cz: coord.cz, generator: generator)
             generated += 1
         }
 
-        // Unload far chunks.
+        // Unload far chunks (keep oasis carves resident so water doesn't vanish).
         let (bx, _, bz) = voxelWorld.blockCoord(worldX: px, worldY: 0, worldZ: pz)
         let (pcx, pcz) = voxelWorld.chunkCoord(blockX: bx, blockZ: bz)
         for chunk in voxelWorld.allChunks() {
             let dx = chunk.cx - pcx
             let dz = chunk.cz - pcz
             if max(abs(dx), abs(dz)) > streamUnloadRadius {
+                if chunkHostsOasis(cx: chunk.cx, cz: chunk.cz) { continue }
                 voxelWorld.unloadChunk(cx: chunk.cx, cz: chunk.cz)
             }
         }
+    }
+
+    private func chunkHostsOasis(cx: Int, cz: Int) -> Bool {
+        guard let voxelWorld else { return false }
+        for oasis in oases {
+            let (bx, _, bz) = voxelWorld.blockCoord(
+                worldX: oasis.position.x, worldY: 0, worldZ: oasis.position.z
+            )
+            let (ocx, ocz) = voxelWorld.chunkCoord(blockX: bx, blockZ: bz)
+            if abs(ocx - cx) <= 2 && abs(ocz - cz) <= 2 { return true }
+        }
+        return false
+    }
+
+    private func decorateStreamedChunk(cx: Int, cz: Int, generator: VoxelWorldGenerator) {
+        let key = voxelWorld.chunkKey(cx, cz)
+        guard !streamDecoratedChunks.contains(key) else { return }
+        streamDecoratedChunks.insert(key)
+
+        if propsRoot == nil {
+            let root = SCNNode()
+            root.name = "voxel_props"
+            rootNode.addChildNode(root)
+            propsRoot = root
+        }
+        guard let propsRoot else { return }
+
+        VoxelPropBuilder.scatterPropsInChunk(
+            world: voxelWorld,
+            cx: cx,
+            cz: cz,
+            seed: worldSeed,
+            oases: oases,
+            campSites: campSites,
+            into: propsRoot
+        )
+
+        // Rare wild oasis far from home (~1 in 28 decorated chunks beyond 130 m).
+        var oasisRng = SeededRandom(seed: worldSeed &+ 3_301 &+ UInt64(bitPattern: Int64(key)))
+        guard oasisRng.nextFloat() < 0.036 else { return }
+        let bs = voxelWorld.blockSize
+        let (originBX, originBZ) = voxelWorld.chunkOriginBlock(cx: cx, cz: cz)
+        let wx = Float(originBX) * bs + Float(VoxelChunk.sizeX) * bs * 0.5
+        let wz = Float(originBZ) * bs + Float(VoxelChunk.sizeZ) * bs * 0.5
+        guard let oasis = generator.placeAndCarveStreamOasis(
+            into: voxelWorld,
+            aroundX: wx,
+            aroundZ: wz,
+            existing: oases
+        ) else { return }
+        let oasisID = oasisKey(oasis)
+        guard !placedOasisKeys.contains(oasisID) else { return }
+        placedOasisKeys.insert(oasisID)
+        oases.append(oasis)
+        addWaterBody(for: oasis)
+        VoxelPropBuilder.scatterOasisPalms(world: voxelWorld, oasis: oasis, seed: worldSeed, into: propsRoot)
+        voxelWorld.remeshDirtyChunks()
     }
 
     private func discoverNearbyCamps() {
@@ -1901,11 +1964,29 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             if case .finish(let s, _)? = campSpawnPhase, s.id == site.id { continue }
             let dx = site.worldX - px
             let dz = site.worldZ - pz
-            guard sqrt(dx * dx + dz * dz) < campDiscoverRadius else { continue }
+            let dist = sqrt(dx * dx + dz * dz)
+            guard dist < discoverRadius(for: site, playerX: px, playerZ: pz) else { continue }
             queuedCampSites.append(site)
         }
 
         advanceCampSpawn()
+    }
+
+    /// Wider radius when the player is roughly on the home→camp bearing (compass challenge assist).
+    private func discoverRadius(for site: CampSite, playerX: Float, playerZ: Float) -> Float {
+        if site.isHome { return campDiscoverRadius }
+        let campDist = sqrt(site.worldX * site.worldX + site.worldZ * site.worldZ)
+        let playerDist = sqrt(playerX * playerX + playerZ * playerZ)
+        guard campDist > 50, playerDist > campDist * 0.5 else { return campDiscoverRadius }
+
+        let campBearing = CampSiteGenerator.bearingTo(x: site.worldX, z: site.worldZ)
+        let playerBearing = CampSiteGenerator.bearingTo(x: playerX, z: playerZ)
+        let delta = CampSiteGenerator.bearingDelta(campBearing, playerBearing)
+        // ~18° corridor — hold the elder's bearing and you'll find it.
+        if delta < (18 * Float.pi / 180) {
+            return campDiscoverRadiusOnBearing
+        }
+        return campDiscoverRadius
     }
 
     private func advanceCampSpawn() {
@@ -1960,15 +2041,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             spawnNPCs(for: node)
             spawnAnimals(for: node)
 
-            let newOases = generator.placeAndCarveOases(
-                into: voxelWorld, nearSites: [site], oasisCount: 1
-            )
-            for oasis in newOases {
+            if let oasis = generator.placeAndCarveRemoteCampOasis(into: voxelWorld, site: site) {
                 let key = oasisKey(oasis)
-                guard !placedOasisKeys.contains(key) else { continue }
-                placedOasisKeys.insert(key)
-                oases.append(oasis)
-                addWaterBody(for: oasis)
+                if !placedOasisKeys.contains(key) {
+                    placedOasisKeys.insert(key)
+                    oases.append(oasis)
+                    addWaterBody(for: oasis)
+                    if let propsRoot {
+                        VoxelPropBuilder.scatterOasisPalms(
+                            world: voxelWorld, oasis: oasis, seed: worldSeed, into: propsRoot
+                        )
+                    }
+                }
             }
             voxelWorld.remeshDirtyChunks()
 

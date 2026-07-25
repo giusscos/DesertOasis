@@ -16,6 +16,14 @@ struct CampSituation {
     var tradeBeads: Int = 0
     var helpCount: Int = 0
     var hasLantern: Bool = false
+    /// Home camp oasis stage raw value (for mission offers / dialogue gates).
+    var oasisStageRaw: Int = 0
+    /// Poetic compass hint for the next camping zone (if known).
+    var nextCampHint: String? = nil
+
+    var oasisStage: OasisGrowthStage {
+        OasisGrowthStage(rawValue: oasisStageRaw) ?? .barren
+    }
 
     var waterLabel: String {
         switch campWaterLevel {
@@ -38,11 +46,17 @@ struct CampSituation {
         if isCarryingWater {
             lines.append("The player is currently carrying a full water bucket.")
         }
-        if hasCompass { lines.append("The player has a water compass.") }
+        if hasCompass { lines.append("The player has a water compass that points north.") }
         if hasDetector { lines.append("The player has a water detector.") }
-        if hasLantern { lines.append("The player owns a lantern.") }
+        if hasLantern { lines.append("The player owns a lantern for night travel.") }
         if helpCount > 0 {
             lines.append("This traveller has been helped by the player \(helpCount) time(s) before.")
+        }
+        if oasisStage >= .flourishing {
+            lines.append("The home oasis is flourishing — fully restored.")
+            if let hint = nextCampHint {
+                lines.append("You have whispered that another camping zone lies \(hint). Urge them to take the compass and walk that path without giving exact distances.")
+            }
         }
         if let name = playerName, !name.isEmpty {
             lines.append("The player's name is \(name).")
@@ -198,7 +212,19 @@ enum NPCPersonality: CaseIterable {
                 ]
             }
         case .elder:
-            if carrying {
+            if situation.oasisStage >= .flourishing {
+                if let hint = situation.nextCampHint {
+                    variants = [
+                        "Our oasis drinks deep. Another camping zone waits \(hint) — take the compass, not a map.",
+                        "Home is green. Walk \(hint) by compass-light. The next camp will not announce itself.",
+                    ]
+                } else {
+                    variants = [
+                        "Our oasis drinks deep. Farther dunes still wait for patient hands and a compass.",
+                        "Home is green. Carry the lantern at night, and seek another camping zone beyond the horizon.",
+                    ]
+                }
+            } else if carrying {
                 variants = [
                     "Water walks with you. Let it rest in our barrel.",
                     "The desert returns what you carry—pour, and the camp drinks.",
@@ -288,6 +314,12 @@ enum NPCPersonality: CaseIterable {
                 ? "Look for shiny water far away… then bring it home!"
                 : greeting(for: situation)
         case .elder:
+            if situation.oasisStage >= .flourishing {
+                if let hint = situation.nextCampHint {
+                    return "Take the compass. Walk \(hint). Do not expect the dunes to shout the camp's name."
+                }
+                return "Home thrives. Carry the lantern after dark, and seek another camping zone beyond these palms."
+            }
             if asksWater {
                 return "Follow the cool breath of the dunes at dawn. Return with what you find."
             }
@@ -310,11 +342,18 @@ enum NPCPersonality: CaseIterable {
     }
 
     /// Mission this NPC type will offer at the start of a conversation (nil if none).
-    var missionOffer: String? {
+    func missionOffer(for situation: CampSituation) -> String? {
         switch self {
         case .wanderer: return "wanderers_plea"
         case .merchant: return "merchants_route"
-        case .elder:    return "ancient_trial"
+        case .elder:
+            if situation.oasisStage >= .flourishing {
+                return "another_camping_zone"
+            }
+            if situation.oasisStage < .pond {
+                return "ancient_trial"
+            }
+            return nil
         case .lost:     return "lost_and_found"
         case .child:    return nil
         }

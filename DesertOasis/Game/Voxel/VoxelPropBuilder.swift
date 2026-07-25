@@ -999,4 +999,91 @@ enum VoxelPropBuilder {
 
         return container
     }
+
+    /// Sparse props for one streamed chunk so the far desert isn't empty sand.
+    static func scatterPropsInChunk(
+        world: VoxelWorld,
+        cx: Int,
+        cz: Int,
+        seed: UInt64,
+        oases: [OasisInfo],
+        campSites: [CampSite],
+        into container: SCNNode
+    ) {
+        var rng = SeededRandom(seed: seed &+ 9_991 &+ UInt64(bitPattern: Int64(cx)) &* 131
+                               &+ UInt64(bitPattern: Int64(cz)) &* 17_903)
+        let bs = world.blockSize
+        let (originBX, originBZ) = world.chunkOriginBlock(cx: cx, cz: cz)
+        let originX = Float(originBX) * bs
+        let originZ = Float(originBZ) * bs
+        let chunkMeters = Float(VoxelChunk.sizeX) * bs
+
+        func blocked(_ wx: Float, _ wz: Float) -> Bool {
+            if oases.contains(where: {
+                let dx = $0.position.x - wx; let dz = $0.position.z - wz
+                return dx * dx + dz * dz < ($0.radius + 4) * ($0.radius + 4)
+            }) { return true }
+            if campSites.contains(where: {
+                let dx = $0.worldX - wx; let dz = $0.worldZ - wz
+                return dx * dx + dz * dz < ($0.padRadius + 6) * ($0.padRadius + 6)
+            }) { return true }
+            return false
+        }
+
+        // ~35% of chunks get a couple of props; keeps the desert sparse but lived-in.
+        guard rng.nextFloat() < 0.38 else { return }
+        let count = 1 + Int(rng.nextFloat() * 2.5) // 1…3
+        for i in 0..<count {
+            let wx = originX + rng.nextFloat() * chunkMeters
+            let wz = originZ + rng.nextFloat() * chunkMeters
+            if blocked(wx, wz) { continue }
+            let h = world.surfaceY(atWorldX: wx, worldZ: wz)
+            let roll = rng.nextFloat()
+            let node: SCNNode
+            if roll < 0.42 {
+                node = rng.nextFloat() > 0.45 ? saguaroCactus() : barrelCactus()
+                let s = 0.75 + rng.nextFloat() * 0.55
+                node.scale = SCNVector3(s, s, s)
+            } else if roll < 0.78 {
+                node = rng.nextFloat() > 0.5 ? smallRock() : rockCluster()
+                let s = 0.45 + rng.nextFloat() * 1.2
+                node.scale = SCNVector3(s, s * 0.7, s)
+            } else if roll < 0.92 {
+                node = deadTree()
+                let s = 0.75 + rng.nextFloat() * 0.35
+                node.scale = SCNVector3(s, s, s)
+            } else {
+                node = tumbleweed()
+            }
+            node.name = "stream_prop_\(cx)_\(cz)_\(i)"
+            node.position = SCNVector3(wx, h + (roll >= 0.92 ? 0.1 : 0), wz)
+            node.eulerAngles.y = rng.nextFloat() * Float.pi * 2
+            container.addChildNode(node)
+        }
+    }
+
+    /// A few palms around a newly discovered remote oasis.
+    static func scatterOasisPalms(world: VoxelWorld, oasis: OasisInfo, seed: UInt64, into container: SCNNode) {
+        var rng = SeededRandom(seed: seed &+ 4_444
+                               &+ UInt64(oasis.position.x.bitPattern)
+                               &+ UInt64(oasis.position.z.bitPattern))
+        let palmCount = 2 + Int(rng.nextFloat() * 3)
+        var placed = 0
+        var attempts = 0
+        while placed < palmCount && attempts < palmCount * 10 {
+            attempts += 1
+            let angle = rng.nextFloat() * Float.pi * 2
+            let dist = oasis.radius * 1.25 + rng.nextFloat() * (1.4 + oasis.radius * 0.35)
+            let px = oasis.position.x + cos(angle) * dist
+            let pz = oasis.position.z + sin(angle) * dist
+            let h = world.surfaceY(atWorldX: px, worldZ: pz)
+            let palm = palmTree()
+            palm.position = SCNVector3(px, h, pz)
+            palm.eulerAngles.y = rng.nextFloat() * Float.pi * 2
+            let s = 0.85 + rng.nextFloat() * 0.3
+            palm.scale = SCNVector3(s, s, s)
+            container.addChildNode(palm)
+            placed += 1
+        }
+    }
 }

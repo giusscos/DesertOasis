@@ -76,7 +76,7 @@ enum TradeGood: String, Codable, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .lantern:     "Light the dunes at night."
+        case .lantern:     "Light the dunes at night. Also gifted when home flourishes."
         case .mapScrap:    "Hints at a landmark spring."
         case .campTrinket: "A decoration for home camp."
         }

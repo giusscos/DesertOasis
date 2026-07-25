@@ -123,49 +123,155 @@ struct VoxelWorldGenerator {
         var oases: [OasisInfo] = []
         var rng = SeededRandom(seed: seed &+ 42 &+ UInt64(nearSites.count) &* 17)
         let bs = world.blockSize
-        let minOasisSep = 36 / bs
+        let minOasisSep = 40 / bs
 
-        let home = nearSites.first(where: \.isHome) ?? nearSites.first
+        let home = nearSites.first(where: \.isHome)
+        let remotes = nearSites.filter { !$0.isHome }
+
+        // Remote-camp discovery: one harder-to-spot oasis — not hugging the pad.
+        if home == nil, let remote = remotes.first, remotes.count == 1, count <= 2 {
+            // ~55% chance — finding water near a new camp is a reward, not a guarantee.
+            if rng.nextFloat() < 0.55,
+               let oasis = tryPlaceOasis(
+                   world: world, rng: &rng,
+                   aroundX: remote.worldX, aroundZ: remote.worldZ,
+                   minDistFromPoint: 72, maxDistFromPoint: 135,
+                   existing: oases, minSepBlocks: minOasisSep
+               ) {
+                oases.append(oasis)
+            }
+            return oases
+        }
+
         let hx = home?.worldX ?? 0
         let hz = home?.worldZ ?? 0
 
-        // One starter oasis: findable on a short trek, not sitting on camp's doorstep.
-        if count > 0, let starter = tryPlaceOasis(
+        // Starter oasis: findable on a short trek, not sitting on camp's doorstep.
+        if count > 0, home != nil, let starter = tryPlaceOasis(
             world: world, rng: &rng,
             aroundX: hx, aroundZ: hz,
-            minDistFromPoint: 38, maxDistFromPoint: 58,
+            minDistFromPoint: 48, maxDistFromPoint: 72,
             existing: oases, minSepBlocks: minOasisSep
         ) {
             oases.append(starter)
         }
 
-        // One oasis near each remote camp (reward for reaching other sites).
-        for site in nearSites where !site.isHome {
+        // Occasional oasis near remotes only when those chunks exist (usually deferred to discovery).
+        for site in remotes {
             if oases.count >= count { break }
+            // Less common / farther out — search challenge around way camps.
+            guard rng.nextFloat() < 0.4 else { continue }
             if let oasis = tryPlaceOasis(
                 world: world, rng: &rng,
                 aroundX: site.worldX, aroundZ: site.worldZ,
-                minDistFromPoint: 18, maxDistFromPoint: 40,
+                minDistFromPoint: 72, maxDistFromPoint: 130,
                 existing: oases, minSepBlocks: minOasisSep
             ) {
                 oases.append(oasis)
             }
         }
 
-        // Remaining wild oases farther out — exploration rewards, not a carpet.
+        // Remaining wild oases around home — exploration rewards within the initial ring.
         var attempts = 0
         while oases.count < count && attempts < 90 {
             attempts += 1
             if let oasis = tryPlaceOasis(
                 world: world, rng: &rng,
                 aroundX: hx, aroundZ: hz,
-                minDistFromPoint: 60, maxDistFromPoint: 105,
+                minDistFromPoint: 78, maxDistFromPoint: 118,
                 existing: oases, minSepBlocks: minOasisSep
             ) {
                 oases.append(oasis)
             }
         }
         return oases
+    }
+
+    /// Place a single challenging oasis near a remote camp (used on discovery).
+    /// Ensures terrain exists under the candidate before carving.
+    func placeAndCarveRemoteCampOasis(into world: VoxelWorld, site: CampSite) -> OasisInfo? {
+        var rng = SeededRandom(seed: seed &+ 42 &+ Self.stableHash(site.id))
+        guard rng.nextFloat() < 0.55 else { return nil }
+
+        let bs = world.blockSize
+        let minOasisSep = 40 / bs
+        // Prefer a few candidate distances; generate chunks around each try.
+        for _ in 0..<16 {
+            let angle = rng.nextFloat() * Float.pi * 2
+            let dist = 72 + rng.nextFloat() * 63 // 72…135 m
+            let wx = site.worldX + cos(angle) * dist
+            let wz = site.worldZ + sin(angle) * dist
+            let bx = Int(floor(wx / bs))
+            let bz = Int(floor(wz / bs))
+            // Pool carve needs neighbours — generate a local ring first.
+            ensureGeneratedChunks(world: world, centerBX: bx, centerBZ: bz, radiusBlocks: 14)
+            guard var oasis = tryPlaceOasis(
+                world: world, rng: &rng,
+                aroundX: site.worldX, aroundZ: site.worldZ,
+                minDistFromPoint: 72, maxDistFromPoint: 135,
+                existing: [], minSepBlocks: minOasisSep,
+                forcedAngle: angle, forcedDist: dist
+            ) else { continue }
+            carveOasis(world: world, oasis: &oasis)
+            return oasis
+        }
+        return nil
+    }
+
+    /// Rare wild oasis while streaming far from home — keeps exploration rewarding.
+    func placeAndCarveStreamOasis(
+        into world: VoxelWorld,
+        aroundX: Float,
+        aroundZ: Float,
+        existing: [OasisInfo]
+    ) -> OasisInfo? {
+        let distHome = sqrt(aroundX * aroundX + aroundZ * aroundZ)
+        guard distHome > 130 else { return nil }
+
+        var rng = SeededRandom(
+            seed: seed &+ 88_021
+                &+ UInt64(aroundX.bitPattern)
+                &+ UInt64(aroundZ.bitPattern) &* 17
+        )
+        // Low chance per call — DesertScene gates by chunk hash too.
+        guard rng.nextFloat() < 0.85 else { return nil }
+
+        let bs = world.blockSize
+        let minOasisSep = 55 / bs
+        let tooCloseCamp = campSites.contains {
+            let dx = aroundX - $0.worldX
+            let dz = aroundZ - $0.worldZ
+            return dx * dx + dz * dz < 90 * 90
+        }
+        if tooCloseCamp { return nil }
+
+        let tooCloseOasis = existing.contains {
+            let dx = aroundX - $0.position.x
+            let dz = aroundZ - $0.position.z
+            return dx * dx + dz * dz < 70 * 70
+        }
+        if tooCloseOasis { return nil }
+
+        let bx = Int(floor(aroundX / bs))
+        let bz = Int(floor(aroundZ / bs))
+        ensureGeneratedChunks(world: world, centerBX: bx, centerBZ: bz, radiusBlocks: 12)
+        guard var oasis = tryPlaceOasis(
+            world: world, rng: &rng,
+            aroundX: aroundX, aroundZ: aroundZ,
+            minDistFromPoint: 0, maxDistFromPoint: 6,
+            existing: existing, minSepBlocks: minOasisSep
+        ) else { return nil }
+        carveOasis(world: world, oasis: &oasis)
+        return oasis
+    }
+
+    private static func stableHash(_ id: String) -> UInt64 {
+        var h: UInt64 = 0xcbf2_9ce4_8422_2325
+        for b in id.utf8 {
+            h ^= UInt64(b)
+            h = h &* 0x1000_0000_01b3
+        }
+        return h
     }
 
     private func tryPlaceOasis(world: VoxelWorld,
@@ -175,11 +281,14 @@ struct VoxelWorldGenerator {
                                minDistFromPoint: Float,
                                maxDistFromPoint: Float,
                                existing: [OasisInfo],
-                               minSepBlocks: Float) -> OasisInfo? {
+                               minSepBlocks: Float,
+                               forcedAngle: Float? = nil,
+                               forcedDist: Float? = nil) -> OasisInfo? {
         let bs = world.blockSize
-        for _ in 0..<12 {
-            let angle = rng.nextFloat() * Float.pi * 2
-            let dist = minDistFromPoint + rng.nextFloat() * (maxDistFromPoint - minDistFromPoint)
+        let attempts = forcedAngle != nil ? 1 : 12
+        for _ in 0..<attempts {
+            let angle = forcedAngle ?? (rng.nextFloat() * Float.pi * 2)
+            let dist = forcedDist ?? (minDistFromPoint + rng.nextFloat() * (maxDistFromPoint - minDistFromPoint))
             let wx = aroundX + cos(angle) * dist
             let wz = aroundZ + sin(angle) * dist
             let bx = Int(floor(wx / bs))
@@ -215,8 +324,8 @@ struct VoxelWorldGenerator {
                 position: SCNVector3((Float(bx) + 0.5) * bs, actualSurfY, (Float(bz) + 0.5) * bs),
                 radius: radius
             )
-            // ~28% of oases become landmarks
-            if rng.nextFloat() < 0.28 {
+            // ~22% of oases become landmarks (slightly rarer — more of a find)
+            if rng.nextFloat() < 0.22 {
                 let kinds = LandmarkKind.allCases
                 let idx = Int(rng.nextFloat() * Float(kinds.count)) % kinds.count
                 oasis.landmark = kinds[idx]

@@ -68,7 +68,7 @@ enum DiaryCatalog {
         (
             "dream_flourishing",
             "Dream of Gathering",
-            "At dusk the fire draws neighbours close. Water made a village from a ruin."
+            "At dusk the fire draws neighbours close. Water made a village from a ruin. Beyond the palms, another camping zone waits — walk by compass, lantern in hand."
         ),
         (
             "landmark_shrine",
