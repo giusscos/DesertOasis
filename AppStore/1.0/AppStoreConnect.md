@@ -96,6 +96,43 @@ Begin your journey. Explore a vast procedural desert, discover hidden oases, hel
 
 ---
 
+## Pricing (v1.0)
+
+**Decision: Paid upfront — $4.99 USD** (App Store Price Tier 5 / equivalent local tiers).
+
+| Option | Verdict |
+|---|---|
+| Free + ads / IAP | Rejected — no StoreKit, no ad SDKs; genre and tone fight aggressive monetization |
+| Free with no monetization | Rejected — no revenue and weak signal for a content-complete 3D game |
+| $2.99 | Viable launch promo only — impulse-friendly, but undersells polish vs. peers |
+| **$4.99** | **Ship here** — standard premium indie mobile tier |
+| $6.99–$9.99 | Too high for a first release without reviews, press, or a known brand |
+
+### Why $4.99
+
+- **Model fits the product.** Offline single-player, calm exploration, no live-ops loop → one-time purchase matches player expectations (same model as Stardew Valley on iOS at $4.99).
+- **Content depth.** Procedural desert, oasis growth loop, missions, NPCs/dialogue, animals, diary collection, sandstorms, Game Center achievements/leaderboards — enough for a “real game” price, not a novelty $0.99 toy.
+- **Not Stardew-scale hours**, so stay at the $4.99 ceiling rather than climbing to $6.99+ until post-launch content and ratings justify it.
+- **Audience.** Adventure / Simulation players who want unhurried progress convert better on a clear paid buy than on a free install that feels incomplete.
+- **iOS 26+ only** already narrows the funnel; a mid-premium price filters for buyers who finish games rather than maximizing raw downloads.
+
+### Launch playbook
+
+1. Submit at **$4.99** in all territories (use Apple’s equivalent local pricing).
+2. Optional: schedule a short **$2.99** intro offer (1–2 weeks) only if launch visibility is weak; raise back to $4.99 after.
+3. Keep **no IAP** for v1.0. If a later expansion is large (new biomes, story arc), prefer a paid major update narrative or a single expansion IAP — not a grind shop.
+4. Do not undercut with “Free” then add a paywall; App Review notes already state there is no onboarding paywall.
+
+### Comparable anchors (mobile)
+
+| Title | Typical price | Relevance |
+|---|---|---|
+| Stardew Valley | $4.99 | Premium calm simulation benchmark (far more hours) |
+| Narrative / chill indie adventures | $2.99–$4.99 | Closest buyer expectation for Oasis Keeper |
+| Unknown indie first release | Avoid $6.99+ | Conversion drops without brand or reviews |
+
+---
+
 ## Notes
 
 - **Promotional Text** can be updated at any time without a new app review — good for seasonal messaging or launch announcements.
@@ -173,7 +210,7 @@ No login credentials or sample files are required.
 | Apple Game Center | Leaderboards (oases restored, deliveries, wanderers helped) and 12 achievements |
 | Apple Foundation Models (on-device) | NPC dialogue generation via Apple Intelligence — processed entirely on-device, no network calls made |
 
-**No** third-party analytics, advertising SDKs, auth providers, payment processors, or external AI services. No StoreKit in-app purchases (the app is paid upfront or free, per pricing decision at submission). No iCloud sync in v1.0.
+**No** third-party analytics, advertising SDKs, auth providers, payment processors, or external AI services. No StoreKit in-app purchases — **paid upfront at $4.99** (see Pricing above). No iCloud sync in v1.0.
 
 ---
 
