@@ -122,7 +122,7 @@ struct LobbyContainerView: View {
 
     private func handleSlotSelect(_ index: Int) {
         lobbyScene.openDiary(at: index) {
-            let slot = self.gameManager.saveSlots[index]
+            guard let slot = self.gameManager.slot(at: index) else { return }
             if slot.isEmpty {
                 self.moveToCharacterSelection(slotIndex: index)
             } else {
@@ -224,12 +224,14 @@ struct SlotSelectionOverlayView: View {
                 }
 
                 HStack(alignment: .bottom, spacing: 10) {
-                    ForEach(0..<3) { idx in
-                        SlotCardView(slot: gameManager.saveSlots[idx], slotIndex: idx) {
-                            onSlotSelected(idx)
-                        } onDelete: {
-                            deleteIndex = idx
-                            showDeleteConfirm = true
+                    ForEach(0..<GameManager.slotCount, id: \.self) { idx in
+                        if let slot = gameManager.slot(at: idx) {
+                            SlotCardView(slot: slot, slotIndex: idx) {
+                                onSlotSelected(idx)
+                            } onDelete: {
+                                deleteIndex = idx
+                                showDeleteConfirm = true
+                            }
                         }
                     }
                 }

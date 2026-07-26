@@ -11,8 +11,10 @@ enum GameScreen: Equatable {
 
 @Observable
 final class GameManager {
+    static let slotCount = 3
+
     var currentScreen: GameScreen = .title
-    var saveSlots: [SaveSlot] = [SaveSlot(id: 0), SaveSlot(id: 1), SaveSlot(id: 2)]
+    var saveSlots: [SaveSlot] = (0..<GameManager.slotCount).map { SaveSlot(id: $0) }
     var musicEnabled: Bool = true
     var soundEnabled: Bool = true
     /// Visible sun, moon, and clouds — disable for weaker devices.
@@ -52,6 +54,19 @@ final class GameManager {
         }
     }
 
+    /// Always returns exactly `slotCount` slots so UI/game indexing cannot trap.
+    private static func normalizedSlots(_ decoded: [SaveSlot]) -> [SaveSlot] {
+        var result = (0..<slotCount).map { SaveSlot(id: $0) }
+        for slot in decoded where (0..<slotCount).contains(slot.id) {
+            result[slot.id] = slot
+        }
+        return result
+    }
+
+    private func isValidSlotIndex(_ index: Int) -> Bool {
+        saveSlots.indices.contains(index)
+    }
+
     // MARK: - Persistence
 
     private func loadAll() {
@@ -67,11 +82,14 @@ final class GameManager {
         kvStore.synchronize()
         if let data = kvStore.data(forKey: slotsKey),
            let slots = try? JSONDecoder().decode([SaveSlot].self, from: data) {
-            saveSlots = slots
+            saveSlots = Self.normalizedSlots(slots)
+            if slots.count != Self.slotCount || slots.contains(where: { !((0..<Self.slotCount).contains($0.id)) }) {
+                persistSlots()
+            }
         } else if let data = UserDefaults.standard.data(forKey: slotsKey),
                   let slots = try? JSONDecoder().decode([SaveSlot].self, from: data) {
             // One-time migration from UserDefaults on first launch.
-            saveSlots = slots
+            saveSlots = Self.normalizedSlots(slots)
             persistSlots()
         }
     }
@@ -97,16 +115,17 @@ final class GameManager {
         guard let data = NSUbiquitousKeyValueStore.default.data(forKey: slotsKey),
               let synced = try? JSONDecoder().decode([SaveSlot].self, from: data)
         else { return }
-        for (i, slot) in synced.enumerated() {
-            guard i < saveSlots.count else { break }
+        let normalized = Self.normalizedSlots(synced)
+        for i in saveSlots.indices {
             if case .playing(let activeIdx) = currentScreen, activeIdx == i { continue }
-            saveSlots[i] = slot
+            saveSlots[i] = normalized[i]
         }
     }
 
     // MARK: - Slot actions
 
     func startNewGame(slotIndex: Int, gender: SaveSlot.CharacterGender) {
+        guard isValidSlotIndex(slotIndex) else { return }
         let now = Date()
         saveSlots[slotIndex] = SaveSlot(id: slotIndex)
         saveSlots[slotIndex].characterGender = gender
@@ -117,12 +136,14 @@ final class GameManager {
     }
 
     func continueGame(slotIndex: Int) {
+        guard isValidSlotIndex(slotIndex) else { return }
         saveSlots[slotIndex].lastUpdated = Date()
         persistSlots()
         currentScreen = .playing(slotIndex: slotIndex)
     }
 
     func deleteSlot(_ index: Int) {
+        guard isValidSlotIndex(index) else { return }
         saveSlots[index] = SaveSlot(id: index)
         persistSlots()
     }
@@ -161,6 +182,7 @@ final class GameManager {
         mapScrapsOwned: Int? = nil,
         nextCampHint: String? = nil
     ) {
+        guard isValidSlotIndex(slotIndex) else { return }
         if let w = waterFound       { saveSlots[slotIndex].waterFound       = w }
         if let o = oasisFound {
             saveSlots[slotIndex].oasisFound = o
@@ -223,12 +245,22 @@ final class GameManager {
     }
 
     var activeSlot: SaveSlot? {
-        if case .playing(let idx) = currentScreen { return saveSlots[idx] }
+        if case .playing(let idx) = currentScreen, isValidSlotIndex(idx) {
+            return saveSlots[idx]
+        }
         return nil
     }
 
     var activeSlotIndex: Int? {
-        if case .playing(let idx) = currentScreen { return idx }
+        if case .playing(let idx) = currentScreen, isValidSlotIndex(idx) {
+            return idx
+        }
         return nil
+    }
+
+    /// Safe slot lookup for UI / game views that index by slot number.
+    func slot(at index: Int) -> SaveSlot? {
+        guard isValidSlotIndex(index) else { return nil }
+        return saveSlots[index]
     }
 }

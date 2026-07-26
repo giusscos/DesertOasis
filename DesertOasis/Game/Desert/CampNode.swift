@@ -27,7 +27,7 @@ final class CampNode: SCNNode {
     let site: CampSite
     private(set) var barrelNode: SCNNode!
     private var campfireNode: SCNNode!
-    private var waterSurface: SCNNode!
+    private var waterSurface: SCNNode?
     private(set) var fillLevel: Float = 0
     private(set) var tentFootprints: [TentFootprint] = []
     private var tentNodes: [SCNNode] = []
@@ -106,6 +106,10 @@ final class CampNode: SCNNode {
     func setFillLevel(_ level: Float) {
         fillLevel = max(0, min(1, level))
         // Solid water column grows upward from the barrel floor.
+        guard let waterSurface else {
+            refreshStatsSign()
+            return
+        }
         waterSurface.scale.y = max(0.02, fillLevel)
         waterSurface.position.y = 0.12
         waterSurface.isHidden = fillLevel < 0.01
@@ -464,7 +468,7 @@ final class CampNode: SCNNode {
         barrelNode = VoxelPropBuilder.waterBarrel()
         // South-east rim — opposite the main tent entrance.
         barrelNode.position = SCNVector3(waterHub.x + oasisRim * 0.55, 0, waterHub.z - oasisRim * 0.85)
-        waterSurface = barrelNode.childNode(withName: "water_surface", recursively: true)!
+        waterSurface = barrelNode.childNode(withName: "water_surface", recursively: true)
         addChildNode(barrelNode)
     }
 

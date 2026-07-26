@@ -455,23 +455,45 @@ final class NPCNode: SCNNode {
 
     private func setupIndicator() {
         let container = SCNNode()
+        let bubbleRadius: CGFloat = 0.18
 
-        let bubble = SCNNode(geometry: SCNSphere(radius: 0.25))
-        let mat = SCNMaterial(); mat.diffuse.contents = UIColor(white: 0, alpha: 0.35)
+        let bubble = SCNNode(geometry: SCNSphere(radius: bubbleRadius))
+        let mat = SCNMaterial()
+        mat.diffuse.contents = UIColor(white: 0, alpha: 0.45)
+        mat.lightingModel = .constant
         bubble.geometry?.firstMaterial = mat
         container.addChildNode(bubble)
 
-        let textGeo = SCNText(string: "!", extrusionDepth: 0.05)
-        textGeo.font = UIFont.boldSystemFont(ofSize: 0.35)
-        textGeo.firstMaterial?.diffuse.contents = UIColor(red: 1.0, green: 0.85, blue: 0.1, alpha: 1)
+        let textGeo = SCNText(string: "!", extrusionDepth: 0.02)
+        textGeo.font = UIFont.boldSystemFont(ofSize: 0.22)
+        textGeo.flatness = 0.2
+        let textMat = SCNMaterial()
+        textMat.diffuse.contents = UIColor(red: 1.0, green: 0.85, blue: 0.1, alpha: 1)
+        textMat.lightingModel = .constant
+        textMat.isDoubleSided = true
+        textGeo.firstMaterial = textMat
+
         let textNode = SCNNode(geometry: textGeo)
-        textNode.position = SCNVector3(-0.08, -0.15, 0.15)
+        // SCNText origin is bottom-left; center the glyph in the bubble via pivot.
+        let (minB, maxB) = textNode.boundingBox
+        textNode.pivot = SCNMatrix4MakeTranslation(
+            (minB.x + maxB.x) * 0.5,
+            (minB.y + maxB.y) * 0.5,
+            (minB.z + maxB.z) * 0.5
+        )
+        textNode.position = SCNVector3(0, 0, Float(bubbleRadius) * 0.15)
         container.addChildNode(textNode)
 
-        container.position = SCNVector3(0, 1.9, 0)
+        // Head top ≈ 33 voxel units (hat crown ≈ 37); clear the bubble above it.
+        let palette = VoxelCharacterBuilder.Palette.npc(personality)
+        let topUnits: Float = palette.hat != nil ? 37 : 33
+        let headTopY = topUnits * VoxelMetrics.unit * palette.scale
+        let clearance = Float(bubbleRadius) + 0.2
+        container.position = SCNVector3(0, headTopY + clearance, 0)
+        container.constraints = [SCNBillboardConstraint()]
         container.runAction(.repeatForever(.sequence([
-            .moveBy(x: 0, y: 0.15, z: 0, duration: 0.8),
-            .moveBy(x: 0, y: -0.15, z: 0, duration: 0.8)
+            .moveBy(x: 0, y: 0.12, z: 0, duration: 0.8),
+            .moveBy(x: 0, y: -0.12, z: 0, duration: 0.8)
         ])))
 
         indicatorNode = container

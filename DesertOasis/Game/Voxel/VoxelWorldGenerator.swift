@@ -61,35 +61,55 @@ struct VoxelWorldGenerator {
                          totalSize: totalSize)
     }
 
-    func generateChunk(into world: VoxelWorld, cx: Int, cz: Int) {
-        guard let chunk = world.chunk(cx: cx, cz: cz, create: true) else { return }
-        let totalSize = world.totalSize
-        let bs        = world.blockSize
-
-        // Precompute pad heights in Swift (calls C++ columnHeight internally)
+    /// Pure terrain fill — safe to call off the main thread (no SceneKit / world mutation).
+    func makeChunkBlocks(cx: Int, cz: Int, totalSize: Float, blockSize: Float) -> [UInt8] {
         let wx  = campSites.map { $0.worldX }
         let wz  = campSites.map { $0.worldZ }
         let wr  = campSites.map { $0.padRadius }
         let phs = campSites.map { Int32(padHeight(for: $0, totalSize: totalSize)) }
 
         var raw = [UInt8](repeating: 0, count: VoxelChunk.volume)
-
-        wx.withUnsafeBufferPointer  { wxBuf in
-        wz.withUnsafeBufferPointer  { wzBuf in
-        wr.withUnsafeBufferPointer  { wrBuf in
-        phs.withUnsafeBufferPointer { phBuf in
         raw.withUnsafeMutableBufferPointer { rBuf in
-            voxel_gen_chunk(
-                rBuf.baseAddress!,
-                Int32(cx), Int32(cz),
-                seed, bs, totalSize,
-                Int32(heightScale), Int32(baseHeight),
-                wxBuf.baseAddress!, wzBuf.baseAddress!,
-                wrBuf.baseAddress!, phBuf.baseAddress!,
-                Int32(campSites.count)
-            )
-        }}}}}
+            guard let outBlocks = rBuf.baseAddress else { return }
+            if campSites.isEmpty {
+                voxel_gen_chunk(
+                    outBlocks,
+                    Int32(cx), Int32(cz),
+                    seed, blockSize, totalSize,
+                    Int32(heightScale), Int32(baseHeight),
+                    nil, nil, nil, nil,
+                    0
+                )
+            } else {
+                wx.withUnsafeBufferPointer  { wxBuf in
+                wz.withUnsafeBufferPointer  { wzBuf in
+                wr.withUnsafeBufferPointer  { wrBuf in
+                phs.withUnsafeBufferPointer { phBuf in
+                    guard let campWX = wxBuf.baseAddress,
+                          let campWZ = wzBuf.baseAddress,
+                          let campWR = wrBuf.baseAddress,
+                          let campPH = phBuf.baseAddress else { return }
+                    voxel_gen_chunk(
+                        outBlocks,
+                        Int32(cx), Int32(cz),
+                        seed, blockSize, totalSize,
+                        Int32(heightScale), Int32(baseHeight),
+                        campWX, campWZ, campWR, campPH,
+                        Int32(campSites.count)
+                    )
+                }}}}
+            }
+        }
+        return raw
+    }
 
+    func generateChunk(into world: VoxelWorld, cx: Int, cz: Int) {
+        guard let chunk = world.chunk(cx: cx, cz: cz, create: true) else { return }
+        let raw = makeChunkBlocks(
+            cx: cx, cz: cz,
+            totalSize: world.totalSize,
+            blockSize: world.blockSize
+        )
         chunk.loadBlocks(from: raw)
     }
 

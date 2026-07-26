@@ -150,7 +150,7 @@ struct GameView: View {
         timeOfDay > 0.68 || timeOfDay < 0.22
     }
 
-    var slot: SaveSlot { gameManager.saveSlots[slotIndex] }
+    var slot: SaveSlot { gameManager.slot(at: slotIndex) ?? SaveSlot(id: slotIndex) }
 
     #if DEBUG
     private var debugFrameTimeHandler: ((Float) -> Void)? {
@@ -172,6 +172,7 @@ struct GameView: View {
                 acceptsKeyboard: acceptsKeyboardInput,
                 pointerLookEnabled: isPointerLockedGameplay,
                 showsJoystick: showsOnScreenJoystick,
+                isRenderingEnabled: !isShowingIntro,
                 onNPCTapped: handleNPCTap,
                 onAnimalTapped: handleAnimalTap,
                 onBedTapped: handleBedTap,
@@ -547,7 +548,11 @@ struct GameView: View {
 
             // Show cinematic intro for brand-new saves.
             let isNewGame = slot.waterFound == 0 && slot.oasisFound == 0 && slot.waterDeliveries == 0
-            if isNewGame { isShowingIntro = true }
+            if isNewGame {
+                isShowingIntro = true
+                // Offload terrain fill so the story UI stays responsive.
+                desertScene.prefersYieldingBuild = true
+            }
 
             desertScene.onBuildProgress = { progress in
                 loadProgress = progress
@@ -689,6 +694,7 @@ struct GameView: View {
     }
 
     private func onIntroFinished() {
+        desertScene.prefersYieldingBuild = false
         withAnimation(.easeOut(duration: 0.5)) { isShowingIntro = false }
         ensureCallbacksWired()
         if worldReady {
@@ -1415,7 +1421,11 @@ struct GameView: View {
 
     private func performAction(_ action: ActionKind) {
         switch action {
-        case .giveWater(let npc): desertScene.giveWaterToNPC(npc)
+        case .giveWater(let npc):
+            if dialogueManager.activeNPC?.npcID == npc.npcID {
+                dialogueManager.endConversation()
+            }
+            desertScene.giveWaterToNPC(npc)
         case .deliver: _ = desertScene.tryDeliverWater()
         case .collect: _ = desertScene.tryCollectWater()
         case .sleep: startSleep()
@@ -1922,6 +1932,8 @@ struct GameSceneView: UIViewRepresentable {
     var pointerLookEnabled: Bool = true
     /// When true the on-screen joystick is visible; camera drag is restricted to the right portion of screen.
     var showsJoystick: Bool = false
+    /// Pause SceneKit while the intro story covers the view — frees GPU/CPU for SwiftUI.
+    var isRenderingEnabled: Bool = true
     var onNPCTapped: ((NPCNode) -> Void)?
     var onAnimalTapped: ((AnimalNode) -> Void)?
     var onBedTapped: (() -> Void)?
@@ -2007,6 +2019,10 @@ struct GameSceneView: UIViewRepresentable {
         uiView.pointerLookEnabled = pointerLookEnabled
         uiView.joystickVisible = showsJoystick
         uiView.setKeyboardCaptureEnabled(acceptsKeyboard)
+        uiView.isPlaying = isRenderingEnabled
+        if isRenderingEnabled {
+            uiView.preferredFramesPerSecond = 60
+        }
     }
 
     final class Coordinator: NSObject, SCNSceneRendererDelegate {

@@ -26,6 +26,7 @@ final class DialogueManager {
         hasDetector: false,
         playerName: nil
     )
+    @ObservationIgnored private var responseTask: Task<Void, Never>?
 
     init() {
         modelAvailable = model.availability == .available
@@ -34,6 +35,7 @@ final class DialogueManager {
     // MARK: - Start conversation
 
     func startConversation(with npc: NPCNode, situation: CampSituation) {
+        cancelInFlightResponse()
         activeNPC = npc
         self.situation = situation
         messages = []
@@ -51,6 +53,7 @@ final class DialogueManager {
     }
 
     func endConversation() {
+        cancelInFlightResponse()
         activeNPC?.stopTalkAnimation()
         activeNPC?.setConversing(false)
         activeNPC?.showIndicator()
@@ -58,6 +61,7 @@ final class DialogueManager {
         activeNPC = nil
         messages = []
         session = nil
+        isThinking = false
     }
 
     // MARK: - Send player message
@@ -69,15 +73,21 @@ final class DialogueManager {
         messages.append(DialogueMessage(role: .player, text: text))
         isThinking = true
 
-        Task { @MainActor in
+        cancelInFlightResponse()
+        responseTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
                 let response = try await session.respond(to: text)
-                messages.append(DialogueMessage(role: .npc, text: response.content))
+                guard !Task.isCancelled, self.isVisible else { return }
+                self.messages.append(DialogueMessage(role: .npc, text: response.content))
             } catch {
-                let fallback = fallbackResponse(for: error, playerText: text)
-                messages.append(DialogueMessage(role: .npc, text: fallback))
+                guard !Task.isCancelled, self.isVisible else { return }
+                let fallback = self.fallbackResponse(for: error, playerText: text)
+                self.messages.append(DialogueMessage(role: .npc, text: fallback))
             }
-            isThinking = false
+            if !Task.isCancelled {
+                self.isThinking = false
+            }
         }
     }
 
@@ -90,24 +100,36 @@ final class DialogueManager {
         messages.append(DialogueMessage(role: .player, text: text))
 
         let streamingMsg = DialogueMessage(role: .npc, text: "")
+        let streamingId = streamingMsg.id
         messages.append(streamingMsg)
         isThinking = true
 
-        Task { @MainActor in
+        cancelInFlightResponse()
+        responseTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
                 let stream = session.streamResponse(to: text)
                 var accumulated = ""
                 for try await partial in stream {
+                    guard !Task.isCancelled, self.isVisible else { return }
                     accumulated = partial.content
-                    messages[messages.count - 1] = DialogueMessage(role: .npc, text: accumulated)
+                    guard let idx = self.messages.firstIndex(where: { $0.id == streamingId }) else { return }
+                    self.messages[idx].text = accumulated
                 }
             } catch {
-                messages[messages.count - 1] = DialogueMessage(
-                    role: .npc,
-                    text: fallbackResponse(for: error, playerText: text)
-                )
+                guard !Task.isCancelled, self.isVisible else { return }
+                if let idx = self.messages.firstIndex(where: { $0.id == streamingId }) {
+                    self.messages[idx].text = self.fallbackResponse(for: error, playerText: text)
+                } else {
+                    self.messages.append(DialogueMessage(
+                        role: .npc,
+                        text: self.fallbackResponse(for: error, playerText: text)
+                    ))
+                }
             }
-            isThinking = false
+            if !Task.isCancelled {
+                self.isThinking = false
+            }
         }
     }
 
@@ -128,14 +150,25 @@ final class DialogueManager {
         }
         return "The desert wind swallows my words... try again."
     }
+
+    private func cancelInFlightResponse() {
+        responseTask?.cancel()
+        responseTask = nil
+    }
 }
 
 // MARK: - Message model
 
 struct DialogueMessage: Identifiable {
-    let id = UUID()
+    let id: UUID
     let role: DialogueRole
     var text: String
+
+    init(role: DialogueRole, text: String, id: UUID = UUID()) {
+        self.id = id
+        self.role = role
+        self.text = text
+    }
 }
 
 enum DialogueRole {

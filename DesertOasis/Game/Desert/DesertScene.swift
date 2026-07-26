@@ -100,11 +100,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var deliveryCount = 0
     private var timePersistAccumulator: Float = 0
 
-    // Oasis depletion
+    // Oasis depletion — exhausted pools refill at the next dawn
     private var wasNearCollectableWater = false
-    private var depletedWaterBodies: Set<ObjectIdentifier> = []
-    private var oasisRefillTimers: [ObjectIdentifier: Float] = [:]
-    private let oasisRefillTime: Float = 90.0
 
     // Camp drain (evaporation — separate from NPC irrigation)
     private var campDrainAccumulator: Float = 0
@@ -139,6 +136,21 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private var pendingChunkCoords: [(cx: Int, cz: Int)] = []
     private var buildChunkIndex = 0
     private let chunksPerFrame = 8
+    /// Larger gen batches off-main while intro covers the scene.
+    private let chunksPerYieldFrame = 12
+    private var buildScheduleToken = 0
+    private let buildGenQueue = DispatchQueue(label: "com.desertoasis.worldbuild", qos: .userInitiated)
+    /// When true, generate terrain off-main without remeshing so the intro story stays smooth.
+    var prefersYieldingBuild = false {
+        didSet {
+            guard oldValue != prefersYieldingBuild, isBuildingWorld else { return }
+            if !prefersYieldingBuild {
+                reportBuildProgress()
+            }
+            // Cancel delayed yield callbacks and continue at the new pace.
+            scheduleNextBuildBatch()
+        }
+    }
 
     var onBuildProgress: ((Float) -> Void)?
     var onBuildComplete: (() -> Void)?
@@ -184,13 +196,23 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     }
 
     private func scheduleNextBuildBatch() {
-        DispatchQueue.main.async { [weak self] in
-            self?.processBuildBatch()
+        buildScheduleToken &+= 1
+        let token = buildScheduleToken
+        let delay = prefersYieldingBuild ? 0.02 : 0.0
+        let work: () -> Void = { [weak self] in
+            guard let self, self.buildScheduleToken == token else { return }
+            self.processBuildBatch(scheduleToken: token)
+        }
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        } else {
+            DispatchQueue.main.async(execute: work)
         }
     }
 
-    private func processBuildBatch() {
-        guard isBuildingWorld, let generator = buildGenerator, voxelWorld != nil else { return }
+    private func processBuildBatch(scheduleToken token: Int) {
+        guard isBuildingWorld, buildScheduleToken == token,
+              let generator = buildGenerator, let world = voxelWorld else { return }
 
         let total = pendingChunkCoords.count
         guard total > 0 else {
@@ -198,23 +220,88 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             return
         }
 
-        let end = min(buildChunkIndex + chunksPerFrame, total)
-        for i in buildChunkIndex..<end {
-            let coord = pendingChunkCoords[i]
-            generator.generateChunk(into: voxelWorld, cx: coord.cx, cz: coord.cz)
-            voxelWorld.remeshChunk(cx: coord.cx, cz: coord.cz, animated: true)
+        // After the intro, catch up meshes from offscreen generation before making more terrain.
+        if !prefersYieldingBuild {
+            let remeshed = world.remeshDirtyChunks(limit: chunksPerFrame, animated: false)
+            if remeshed >= chunksPerFrame {
+                reportBuildProgress()
+                scheduleNextBuildBatch()
+                return
+            }
+        }
+
+        let yielding = prefersYieldingBuild
+        let batchSize = yielding ? chunksPerYieldFrame : chunksPerFrame
+        let end = min(buildChunkIndex + batchSize, total)
+
+        // Terrain already generated (e.g. finished under the intro) — remesh then finalize.
+        if buildChunkIndex >= total {
+            if prefersYieldingBuild {
+                // Wait until the intro ends so remeshing doesn't hitch the story.
+                return
+            }
+            if world.dirtyChunkCount > 0 {
+                reportBuildProgress()
+                scheduleNextBuildBatch()
+                return
+            }
+            finalizeBuild()
+            return
+        }
+
+        let coords = Array(pendingChunkCoords[buildChunkIndex..<end])
+
+        if yielding {
+            let totalSize = world.totalSize
+            let blockSize = world.blockSize
+            buildGenQueue.async { [weak self] in
+                let blocks: [(cx: Int, cz: Int, raw: [UInt8])] = coords.map { coord in
+                    (
+                        coord.cx,
+                        coord.cz,
+                        generator.makeChunkBlocks(
+                            cx: coord.cx, cz: coord.cz,
+                            totalSize: totalSize, blockSize: blockSize
+                        )
+                    )
+                }
+                DispatchQueue.main.async {
+                    guard let self, self.buildScheduleToken == token, self.isBuildingWorld else { return }
+                    for item in blocks {
+                        guard let chunk = self.voxelWorld.chunk(cx: item.cx, cz: item.cz, create: true) else { continue }
+                        chunk.loadBlocks(from: item.raw)
+                    }
+                    self.buildChunkIndex = end
+                    if end < total {
+                        self.scheduleNextBuildBatch()
+                    }
+                    // else: pause until intro ends — prefersYieldingBuild didSet reschedules.
+                }
+            }
+            return
+        }
+
+        for coord in coords {
+            generator.generateChunk(into: world, cx: coord.cx, cz: coord.cz)
+            world.remeshChunk(cx: coord.cx, cz: coord.cz, animated: true)
         }
         buildChunkIndex = end
+        reportBuildProgress()
 
-        // Terrain fill is ~0–0.92 of the progress bar; finalize fills the rest.
-        let terrainProgress = Float(end) / Float(total)
-        onBuildProgress?(terrainProgress * 0.92)
-
-        if end < total {
+        if end < total || world.dirtyChunkCount > 0 {
             scheduleNextBuildBatch()
         } else {
             finalizeBuild()
         }
+    }
+
+    private func reportBuildProgress() {
+        let total = max(pendingChunkCoords.count, 1)
+        // Account for remesh catch-up so the bar keeps moving after intro ends.
+        let genFraction = Float(buildChunkIndex) / Float(total)
+        let dirty = voxelWorld?.dirtyChunkCount ?? 0
+        let remeshPenalty = min(0.25, Float(dirty) / Float(total) * 0.25)
+        onBuildProgress?(max(0, genFraction * 0.92 - remeshPenalty))
     }
 
     private func finalizeBuild() {
@@ -1044,6 +1131,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         dayNight.update(deltaTime: dt)
         if dayNight.didCrossDawn(from: previousTOD) {
             expirePleaMissionsAtDawn()
+            refillDepletedOases()
         }
         lastTimeOfDaySample = dayNight.timeOfDay
 
@@ -1370,17 +1458,6 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         var inside = false
         var canCollect = false
         for water in waterBodies {
-            let id = ObjectIdentifier(water)
-            if var timer = oasisRefillTimers[id] {
-                timer -= deltaTime
-                if timer <= 0 {
-                    oasisRefillTimers.removeValue(forKey: id)
-                    depletedWaterBodies.remove(id)
-                    water.refillBuckets()
-                } else {
-                    oasisRefillTimers[id] = timer
-                }
-            }
             let isDepleted = water.isExhausted
             water.update(
                 deltaTime: deltaTime,
@@ -1404,6 +1481,13 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         if canCollect != wasNearCollectableWater {
             wasNearCollectableWater = canCollect
             onNearWater?(canCollect)
+        }
+    }
+
+    /// Restore every exhausted wild oasis when a new day begins.
+    private func refillDepletedOases() {
+        for water in waterBodies where water.isExhausted {
+            water.refillBuckets()
         }
     }
 
@@ -1712,11 +1796,6 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             onHelperStateChanged?(helper.kind.rawValue, helper.carriedBuckets)
         }
 
-        if body.isExhausted {
-            let id = ObjectIdentifier(body)
-            depletedWaterBodies.insert(id)
-            oasisRefillTimers[id] = oasisRefillTime
-        }
         onWaterCollected?()
         return true
     }
@@ -1896,6 +1975,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         cameraWorldPosition = nil
         isSleeping = false
         processRespawnsAfterSleep()
+        refillDepletedOases()
         onTimeOfDayChanged?(dayNight.timeOfDay)
         onSleepFinished?()
         completion?()

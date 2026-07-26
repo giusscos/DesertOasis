@@ -154,8 +154,14 @@ final class OasisWaterNode: SCNNode {
         remnantNode.isHidden = true  // volume covers the dried bed
         if !depleted {
             let n = vDSP_Length(gridSize * gridSize)
-            heights.withUnsafeMutableBufferPointer { vDSP_vclr($0.baseAddress!, 1, n) }
-            velocities.withUnsafeMutableBufferPointer { vDSP_vclr($0.baseAddress!, 1, n) }
+            heights.withUnsafeMutableBufferPointer { buf in
+                guard let base = buf.baseAddress else { return }
+                vDSP_vclr(base, 1, n)
+            }
+            velocities.withUnsafeMutableBufferPointer { buf in
+                guard let base = buf.baseAddress else { return }
+                vDSP_vclr(base, 1, n)
+            }
         }
     }
 
@@ -384,7 +390,7 @@ final class OasisWaterNode: SCNNode {
     private func emitSplash(at local: SCNVector3, intensity: Float) {
         let node = SCNNode()
         node.position = local
-        let system = splashTemplate.copy() as! SCNParticleSystem
+        guard let system = splashTemplate?.copy() as? SCNParticleSystem else { return }
         system.birthRate = CGFloat(max(20, min(140, 90 * intensity)))
         system.particleVelocity = CGFloat(1.2 + intensity * 1.4)
         system.emissionDuration = 0.12
@@ -439,10 +445,10 @@ final class OasisWaterNode: SCNNode {
             velocities.withUnsafeMutableBufferPointer { vBuf in
                 maskF.withUnsafeBufferPointer { mBuf in
                     lapBuf.withUnsafeMutableBufferPointer { lBuf in
-                        let h = hBuf.baseAddress!
-                        let v = vBuf.baseAddress!
-                        let m = mBuf.baseAddress!
-                        let l = lBuf.baseAddress!
+                        guard let h = hBuf.baseAddress,
+                              let v = vBuf.baseAddress,
+                              let m = mBuf.baseAddress,
+                              let l = lBuf.baseAddress else { return }
                         for _ in 0..<stepCount {
                             vDSP_vclr(l, 1, N)
                             for z in 1..<(n - 1) {

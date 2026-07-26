@@ -174,9 +174,23 @@ final class VoxelWorld {
     }
 
     func remeshDirtyChunks() {
+        _ = remeshDirtyChunks(limit: Int.max, animated: false)
+    }
+
+    /// Remeshes up to `limit` dirty chunks. Returns how many were remeshed.
+    @discardableResult
+    func remeshDirtyChunks(limit: Int, animated: Bool = false) -> Int {
+        var count = 0
         for chunk in chunks.values where chunk.isDirty {
-            remesh(chunk, animated: false)
+            remesh(chunk, animated: animated)
+            count += 1
+            if count >= limit { break }
         }
+        return count
+    }
+
+    var dirtyChunkCount: Int {
+        chunks.values.reduce(0) { $0 + ($1.isDirty ? 1 : 0) }
     }
 
     func remeshAll() {
