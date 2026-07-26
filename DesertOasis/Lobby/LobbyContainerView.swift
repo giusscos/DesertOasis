@@ -477,98 +477,166 @@ struct SettingsOverlayView: View {
     var onBack: () -> Void
     /// When set (lobby), shows a bed button opposite the chevron to move the camera to slot selection.
     var onGoToBed: (() -> Void)? = nil
-    /// When set (game view only), shows a button to leave the run and return to the title screen.
-    var onReturnToMainScreen: (() -> Void)? = nil
+    /// Game pause/settings extras (Esc / gear share this overlay).
+    var onDiary: (() -> Void)? = nil
+    var onAchievements: (() -> Void)? = nil
+    var onLeaderboards: (() -> Void)? = nil
+    var onExitToCamp: (() -> Void)? = nil
+
+    private var isPauseMenu: Bool {
+        onDiary != nil || onAchievements != nil || onLeaderboards != nil || onExitToCamp != nil
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.title2)
-                        .foregroundStyle(.white)
-                        .padding(12)
-                        .background(.black.opacity(0.4), in: Circle())
-                }
-                Spacer()
-                if let onGoToBed {
-                    Button(action: onGoToBed) {
-                        Image(systemName: "bed.double.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white)
-                            .padding(12)
-                            .background(.black.opacity(0.4), in: Circle())
-                    }
-                }
+        ZStack {
+            if isPauseMenu {
+                Color.black.opacity(0.55)
+                    .ignoresSafeArea()
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
 
-            ScrollView {
-                VStack(spacing: 0) {
-                    Text("Settings")
-                        .font(.system(.title2, design: .serif, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.bottom, 20)
-
-                    VStack(spacing: 1) {
-                        settingRow(title: "Music", icon: "music.note", isOn: $gameManager.musicEnabled)
-                        settingRow(title: "Sound Effects", icon: "speaker.wave.2", isOn: $gameManager.soundEnabled)
-                        settingRow(title: "Sky Details", icon: "cloud.sun", isOn: $gameManager.skyDetailsEnabled)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-
-                    #if DEBUG
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Debug")
-                            .font(.system(.footnote, design: .serif, weight: .semibold))
-                            .foregroundStyle(.orange.opacity(0.85))
-                            .padding(.top, 16)
-                            .padding(.leading, 4)
-
-                        VStack(spacing: 1) {
-                            settingRow(title: "FPS Overlay", icon: "speedometer", isOn: $gameManager.showFPSOverlay)
-                            settingRow(title: "Benchmark", icon: "chart.bar", isOn: $gameManager.benchmarkEnabled)
-                            settingRow(title: "Camp Zone Markers", icon: "mappin.and.ellipse", isOn: $gameManager.showCampZoneDebug)
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                    }
-                    #endif
-
-                    if let onReturnToMainScreen {
-                        Button(action: onReturnToMainScreen) {
-                            HStack {
-                                Image(systemName: "house")
-                                    .frame(width: 24)
-                                    .foregroundStyle(.orange)
-                                Text("Back to Main Screen")
-                                    .font(.system(.callout, design: .serif))
-                                    .foregroundStyle(.white)
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.35))
+            VStack(spacing: 0) {
+                HStack {
+                    Button(action: onBack) {
+                        if isPauseMenu {
+                            HStack(spacing: 8) {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 14, weight: .bold))
+                                Text("Resume")
+                                    .font(.system(.subheadline, design: .serif, weight: .semibold))
+                                KeyCaptionBadge(label: "Esc")
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 14)
-                            .background(.black.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(.black.opacity(0.4), in: Capsule())
+                        } else {
+                            Image(systemName: "chevron.left")
+                                .font(.title2)
+                                .foregroundStyle(.white)
+                                .padding(12)
+                                .background(.black.opacity(0.4), in: Circle())
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    if let onGoToBed {
+                        Button(action: onGoToBed) {
+                            Image(systemName: "bed.double.fill")
+                                .font(.title2)
+                                .foregroundStyle(.white)
+                                .padding(12)
+                                .background(.black.opacity(0.4), in: Circle())
                         }
                         .buttonStyle(.plain)
-                        .padding(.top, 12)
                     }
-
-                    Text("Oasis Keeper  v1.0")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.3))
-                        .padding(.top, 20)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 24)
-                .padding(.top, 24)
-                .padding(.bottom, 32)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        Text(isPauseMenu ? "Paused" : "Settings")
+                            .font(.system(.title2, design: .serif, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.bottom, 8)
+
+                        if isPauseMenu, GameManager.isMacPlatform, !gameManager.macClickDragCamera {
+                            Text("Cursor unlocked — Resume (or Esc), then click the game to capture look again.")
+                                .font(.system(.caption, design: .serif))
+                                .foregroundStyle(.white.opacity(0.55))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, 16)
+                        } else {
+                            Spacer().frame(height: 12)
+                        }
+
+                        VStack(spacing: 1) {
+                            settingRow(title: "Music", icon: "music.note", isOn: $gameManager.musicEnabled)
+                            settingRow(title: "Sound Effects", icon: "speaker.wave.2", isOn: $gameManager.soundEnabled)
+                            settingRow(title: "Sky Details", icon: "cloud.sun", isOn: $gameManager.skyDetailsEnabled)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                        if GameManager.isMacPlatform {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Mac Controls")
+                                    .font(.system(.footnote, design: .serif, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.55))
+                                    .padding(.top, 16)
+                                    .padding(.leading, 4)
+
+                                VStack(spacing: 1) {
+                                    settingRow(
+                                        title: "Click & Drag Camera",
+                                        icon: "cursorarrow.click.2",
+                                        isOn: $gameManager.macClickDragCamera
+                                    )
+                                    settingRow(
+                                        title: "Invert Vertical Look",
+                                        icon: "arrow.up.arrow.down",
+                                        isOn: $gameManager.invertCameraVertical
+                                    )
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                                Text(gameManager.macClickDragCamera
+                                      ? "Drag with the mouse button held. Cursor stays visible."
+                                      : "Move the mouse to look. Cursor is hidden while playing.")
+                                    .font(.system(.caption2, design: .serif))
+                                    .foregroundStyle(.white.opacity(0.35))
+                                    .padding(.horizontal, 4)
+                            }
+                        }
+
+                        #if DEBUG
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Debug")
+                                .font(.system(.footnote, design: .serif, weight: .semibold))
+                                .foregroundStyle(.orange.opacity(0.85))
+                                .padding(.top, 16)
+                                .padding(.leading, 4)
+
+                            VStack(spacing: 1) {
+                                settingRow(title: "FPS Overlay", icon: "speedometer", isOn: $gameManager.showFPSOverlay)
+                                settingRow(title: "Benchmark", icon: "chart.bar", isOn: $gameManager.benchmarkEnabled)
+                                settingRow(title: "Camp Zone Markers", icon: "mappin.and.ellipse", isOn: $gameManager.showCampZoneDebug)
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                        }
+                        #endif
+
+                        if isPauseMenu {
+                            VStack(spacing: 1) {
+                                if let onDiary {
+                                    menuRow(title: "Keeper's Diary", icon: "book.closed", action: onDiary)
+                                }
+                                if let onAchievements {
+                                    menuRow(title: "Achievements", icon: "trophy", action: onAchievements)
+                                }
+                                if let onLeaderboards {
+                                    menuRow(title: "Leaderboards", icon: "chart.bar.fill", action: onLeaderboards)
+                                }
+                                if let onExitToCamp {
+                                    menuRow(title: "Back to Camp", icon: "tent", action: onExitToCamp)
+                                }
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .padding(.top, 16)
+                        }
+
+                        Text("Oasis Keeper  v1.0")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.3))
+                            .padding(.top, 20)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                    .padding(.bottom, 32)
+                }
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
         }
     }
 
@@ -591,5 +659,26 @@ struct SettingsOverlayView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .background(.black.opacity(0.5))
+    }
+
+    private func menuRow(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: icon)
+                    .frame(width: 24)
+                    .foregroundStyle(.orange)
+                Text(title)
+                    .font(.system(size: 16, design: .serif))
+                    .foregroundStyle(.white)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.35))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(.black.opacity(0.5))
+        }
+        .buttonStyle(.plain)
     }
 }

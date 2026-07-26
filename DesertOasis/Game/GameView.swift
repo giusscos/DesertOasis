@@ -25,7 +25,6 @@ struct GameView: View {
     @State private var isRunningHeld = false
     @State private var lastWaterWarningLevel: Float = 1.0
     @State private var isSleeping = false
-    @State private var isPaused = false
     @State private var isShowingSettings = false
     @State private var timeOfDay: Float = 0.32
     @State private var pressedKeys: Set<GameKey> = []
@@ -62,11 +61,22 @@ struct GameView: View {
         case shiftOrR, touch
     }
 
-    /// Playing with hidden, confined cursor.
+    /// Playing with camera orbit input allowed (menus / dialogue closed).
     private var isPointerLockedGameplay: Bool {
-        !isLoadingWorld && !isSleeping && !isPaused && !isShowingSettings && !isShowingMissions
+        !isLoadingWorld && !isSleeping && !isShowingSettings && !isShowingMissions
             && !isShowingIntro && !dialogueManager.isVisible && !isShowingToolPicker
             && !isShowingTrade && !isShowingDiary && !isShowingAchievements
+    }
+
+    /// Mac click-drag mode keeps the cursor visible; otherwise lock while playing.
+    private var wantsPointerLock: Bool {
+        isPointerLockedGameplay
+            && !(GameManager.isMacPlatform && gameManager.macClickDragCamera)
+    }
+
+    /// Mac click-and-drag orbit (visible cursor); phones always use touch drag.
+    private var usesClickDragOrbit: Bool {
+        GameManager.isMacPlatform && gameManager.macClickDragCamera
     }
 
     /// Keyboard capture (includes pause so Esc can resume).
@@ -76,11 +86,7 @@ struct GameView: View {
 
     /// Virtual stick for phones/iPads; Mac uses WASD instead.
     private var showsOnScreenJoystick: Bool {
-        #if targetEnvironment(macCatalyst)
-        false
-        #else
-        !ProcessInfo.processInfo.isiOSAppOnMac
-        #endif
+        !GameManager.isMacPlatform
     }
 
     private enum ActionKind {
@@ -171,20 +177,23 @@ struct GameView: View {
                 scene: desertScene,
                 acceptsKeyboard: acceptsKeyboardInput,
                 pointerLookEnabled: isPointerLockedGameplay,
+                usesClickDragOrbit: usesClickDragOrbit,
                 showsJoystick: showsOnScreenJoystick,
                 isRenderingEnabled: !isShowingIntro,
                 onNPCTapped: handleNPCTap,
                 onAnimalTapped: handleAnimalTap,
                 onBedTapped: handleBedTap,
                 onSettingsTableTapped: {
-                    guard !isSleeping, !isPaused else { return }
+                    guard !isSleeping else { return }
                     setShowingSettings(true)
                 },
                 onKeyDown: { handleHardwareKey($0, isDown: true) },
                 onKeyUp: { handleHardwareKey($0, isDown: false) },
                 onCameraDrag: { yaw, pitch in
                     guard isPointerLockedGameplay else { return }
-                    desertScene.rotateCamera(yawDelta: yaw, pitchDelta: pitch)
+                    let pitchDelta = (GameManager.isMacPlatform && gameManager.invertCameraVertical)
+                        ? -pitch : pitch
+                    desertScene.rotateCamera(yawDelta: yaw, pitchDelta: pitchDelta)
                 },
                 onFrameTime: debugFrameTimeHandler
             )
@@ -203,37 +212,25 @@ struct GameView: View {
                     .zIndex(9)
             }
 
-            if isPaused, !isLoadingWorld, !isSleeping {
-                PauseOverlay(
-                    onResume: { setPaused(false) },
-                    onDiary: {
-                        setPaused(false)
-                        isShowingDiary = true
-                    },
-                    onAchievements: {
-                        setPaused(false)
-                        isShowingAchievements = true
-                    },
-                    onLeaderboards: {
-                        setPaused(false)
-                        gameManager.gameCenter.presentDashboard()
-                    },
-                    onExitToCamp: {
-                        setPaused(false)
-                        gameManager.currentScreen = .slotSelection
-                    }
-                )
-                .transition(.opacity)
-                .zIndex(11)
-            }
-
             if isShowingSettings, !isLoadingWorld, !isSleeping {
                 SettingsOverlayView(
                     gameManager: gameManager,
                     onBack: { setShowingSettings(false) },
-                    onReturnToMainScreen: {
+                    onDiary: {
                         setShowingSettings(false)
-                        gameManager.currentScreen = .title
+                        isShowingDiary = true
+                    },
+                    onAchievements: {
+                        setShowingSettings(false)
+                        isShowingAchievements = true
+                    },
+                    onLeaderboards: {
+                        setShowingSettings(false)
+                        gameManager.gameCenter.presentDashboard()
+                    },
+                    onExitToCamp: {
+                        setShowingSettings(false)
+                        gameManager.currentScreen = .slotSelection
                     }
                 )
                 .transition(.opacity)
@@ -418,8 +415,8 @@ struct GameView: View {
             }
             #endif
 
-            // HUD (hidden while chatting / loading / sleeping / paused / settings / missions / intro)
-            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused, !isShowingSettings,
+            // HUD (hidden while chatting / loading / sleeping / settings / missions / intro)
+            if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isShowingSettings,
                !isShowingMissions, !isShowingIntro, !isShowingToolPicker, !isShowingTrade,
                !isShowingDiary, !isShowingAchievements {
                 VStack(spacing: 0) {
@@ -449,8 +446,11 @@ struct GameView: View {
                 .animation(.easeOut(duration: 0.25), value: dialogueManager.isVisible)
             }
         }
-        .onChange(of: isPointerLockedGameplay) { _, locked in
-            PointerLockBridge.wantsLock = locked
+        .onChange(of: isPointerLockedGameplay) { _, _ in
+            PointerLockBridge.wantsLock = wantsPointerLock
+        }
+        .onChange(of: gameManager.macClickDragCamera) { _, _ in
+            PointerLockBridge.wantsLock = wantsPointerLock
         }
         .onDisappear {
             PointerLockBridge.wantsLock = false
@@ -458,7 +458,7 @@ struct GameView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIPointerLockState.didChangeNotification)) { _ in
             // Re-assert preference after system evaluates click / fullscreen requirements.
-            if isPointerLockedGameplay {
+            if wantsPointerLock {
                 PointerLockBridge.refresh()
             }
         }
@@ -467,8 +467,7 @@ struct GameView: View {
             if visible {
                 AudioManager.shared.play(.dialogue)
                 clearKeyboardMovement()
-                if isPaused { isPaused = false }
-                if isShowingSettings { isShowingSettings = false }
+                if isShowingSettings { setShowingSettings(false) }
             } else {
                 pendingMissionOffer = nil
             }
@@ -476,8 +475,7 @@ struct GameView: View {
         .onChange(of: isSleeping) { _, sleeping in
             if sleeping {
                 clearKeyboardMovement()
-                isPaused = false
-                isShowingSettings = false
+                if isShowingSettings { setShowingSettings(false) }
             }
         }
         .onChange(of: gameManager.skyDetailsEnabled) { _, enabled in
@@ -493,7 +491,7 @@ struct GameView: View {
         }
         #endif
         .onAppear {
-            PointerLockBridge.wantsLock = isPointerLockedGameplay
+            PointerLockBridge.wantsLock = wantsPointerLock
             desertScene.setSkyDetailsEnabled(gameManager.skyDetailsEnabled)
             #if DEBUG
             performanceMonitor.setBenchmarking(gameManager.benchmarkEnabled)
@@ -637,27 +635,11 @@ struct GameView: View {
         .dynamicTypeSize(.xSmall ... DynamicTypeSize.accessibility3)
     }
 
-    // MARK: - Keyboard / pause
-
-    private func setPaused(_ paused: Bool) {
-        guard isPaused != paused else { return }
-        if paused { isShowingSettings = false }
-        withAnimation(.easeOut(duration: 0.2)) {
-            isPaused = paused
-        }
-        if paused {
-            clearKeyboardMovement()
-            desertScene.isInputBlocked = true
-            PointerLockBridge.wantsLock = false
-        } else {
-            desertScene.isInputBlocked = false
-            PointerLockBridge.wantsLock = isPointerLockedGameplay
-        }
-    }
+    // MARK: - Keyboard / settings
 
     private func setShowingSettings(_ showing: Bool) {
         guard isShowingSettings != showing else { return }
-        if showing { isPaused = false; isShowingMissions = false }
+        if showing { isShowingMissions = false }
         withAnimation(.easeOut(duration: 0.2)) {
             isShowingSettings = showing
         }
@@ -667,13 +649,13 @@ struct GameView: View {
             PointerLockBridge.wantsLock = false
         } else {
             desertScene.isInputBlocked = false
-            PointerLockBridge.wantsLock = isPointerLockedGameplay
+            PointerLockBridge.wantsLock = wantsPointerLock
         }
     }
 
     private func setShowingMissions(_ showing: Bool) {
         guard isShowingMissions != showing else { return }
-        if showing { isPaused = false; isShowingSettings = false }
+        if showing { isShowingSettings = false }
         withAnimation(.easeOut(duration: 0.2)) {
             isShowingMissions = showing
         }
@@ -683,7 +665,7 @@ struct GameView: View {
             PointerLockBridge.wantsLock = false
         } else {
             desertScene.isInputBlocked = false
-            PointerLockBridge.wantsLock = isPointerLockedGameplay
+            PointerLockBridge.wantsLock = wantsPointerLock
         }
     }
 
@@ -756,13 +738,27 @@ struct GameView: View {
                 } else if isShowingAchievements {
                     isShowingAchievements = false
                 } else {
-                    setPaused(!isPaused)
+                    setShowingSettings(true)
                 }
             }
             return
         }
 
-        guard !isPaused else { return }
+        if key == .missions {
+            if isDown {
+                if isShowingMissions {
+                    setShowingMissions(false)
+                } else if !isShowingSettings, !isShowingIntro, !isShowingToolPicker,
+                          !isShowingTrade, !isShowingDiary, !isShowingAchievements {
+                    missionManager.markAllSeen()
+                    saveMissions()
+                    setShowingMissions(true)
+                }
+            }
+            return
+        }
+
+        guard !isShowingSettings, !isShowingMissions else { return }
 
         switch key {
         case .moveForward:
@@ -797,7 +793,7 @@ struct GameView: View {
         case .toolCycle:
             if isDown { cycleTool() }
 
-        case .escape:
+        case .escape, .missions:
             break
         }
     }
@@ -1715,100 +1711,6 @@ struct SleepOverlay: View {
     }
 }
 
-// MARK: - Pause overlay
-
-struct PauseOverlay: View {
-    var onResume: () -> Void
-    var onDiary: () -> Void
-    var onAchievements: () -> Void
-    var onLeaderboards: () -> Void
-    var onExitToCamp: () -> Void
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.55)
-                .ignoresSafeArea()
-
-            VStack(spacing: 22) {
-                Text("Paused")
-                    .font(.system(.largeTitle, design: .serif, weight: .bold))
-                    .foregroundStyle(.white)
-
-                Text("Cursor unlocked — click Resume (or Esc), then click the game to capture the cursor again.")
-                    .font(.system(.subheadline, design: .serif, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 28)
-
-                VStack(spacing: 12) {
-                    Button(action: onResume) {
-                        HStack(spacing: 10) {
-                            Text("Resume")
-                                .font(.system(.headline, design: .serif, weight: .bold))
-                            KeyCaptionBadge(label: "Esc")
-                        }
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: 260)
-                        .padding(.vertical, 14)
-                        .background(Color(red: 0.15, green: 0.50, blue: 0.80).opacity(0.95), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: onDiary) {
-                        Text("Keeper's Diary")
-                            .font(.system(.subheadline, design: .serif, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: 260)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: onAchievements) {
-                        Text("Achievements")
-                            .font(.system(.subheadline, design: .serif, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: 260)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: onLeaderboards) {
-                        Label("Leaderboards", systemImage: "chart.bar.fill")
-                            .font(.system(.subheadline, design: .serif, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: 260)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: onExitToCamp) {
-                        Text("Back to Camp")
-                            .font(.system(.subheadline, design: .serif, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .frame(maxWidth: 260)
-                            .padding(.vertical, 12)
-                            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .stroke(.white.opacity(0.22), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(28)
-            .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 22))
-            .overlay(
-                RoundedRectangle(cornerRadius: 22)
-                    .stroke(.white.opacity(0.18), lineWidth: 1)
-            )
-        }
-    }
-}
-
 // MARK: - World loading overlay
 
 struct WorldLoadingOverlay: View {
@@ -1921,7 +1823,7 @@ struct WorldLoadingOverlay: View {
 
 enum GameHardwareKey: Hashable {
     case moveForward, moveBack, moveLeft, moveRight
-    case run, jump, action, escape, toolCycle
+    case run, jump, action, escape, toolCycle, missions
 }
 
 // MARK: - SCNView wrapper
@@ -1930,6 +1832,8 @@ struct GameSceneView: UIViewRepresentable {
     let scene: DesertScene
     var acceptsKeyboard: Bool = true
     var pointerLookEnabled: Bool = true
+    /// Mac click-and-drag orbit with visible cursor (disables free mouse-look).
+    var usesClickDragOrbit: Bool = false
     /// When true the on-screen joystick is visible; camera drag is restricted to the right portion of screen.
     var showsJoystick: Bool = false
     /// Pause SceneKit while the intro story covers the view — frees GPU/CPU for SwiftUI.
@@ -1979,13 +1883,13 @@ struct GameSceneView: UIViewRepresentable {
         tap.cancelsTouchesInView = false
         v.addGestureRecognizer(tap)
 
-        // Touch-only drag orbit (phones / direct finger).
+        // Touch drag on phones; also mouse/trackpad click-drag when Mac click-drag mode is on.
         let pan = UIPanGestureRecognizer(target: v, action: #selector(GameSCNView.handleCameraPan(_:)))
         pan.maximumNumberOfTouches = 1
         pan.cancelsTouchesInView = false
-        pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         pan.delegate = v
         v.cameraPanRecognizer = pan
+        v.usesClickDragOrbit = usesClickDragOrbit
         v.addGestureRecognizer(pan)
         context.coordinator.cameraPanGesture = pan
 
@@ -2017,6 +1921,7 @@ struct GameSceneView: UIViewRepresentable {
             coordinator?.onCameraDrag?(yaw, pitch)
         }
         uiView.pointerLookEnabled = pointerLookEnabled
+        uiView.usesClickDragOrbit = usesClickDragOrbit
         uiView.joystickVisible = showsJoystick
         uiView.setKeyboardCaptureEnabled(acceptsKeyboard)
         uiView.isPlaying = isRenderingEnabled
@@ -2109,11 +2014,22 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
             }
         }
     }
+    /// Mac click-and-drag: visible cursor; orbit only while dragging (no free mouse-look).
+    var usesClickDragOrbit = false {
+        didSet {
+            guard usesClickDragOrbit != oldValue else { return }
+            applyPanTouchTypes()
+            lastHoverPoint = nil
+            bindMouseLook()
+        }
+    }
     /// Set to true when the on-screen joystick is visible so camera orbit is
     /// restricted to the right portion of the screen (avoiding joystick area).
     var joystickVisible: Bool = false
     /// Reference to the camera pan recognizer; set by the UIViewRepresentable wrapper.
-    var cameraPanRecognizer: UIPanGestureRecognizer?
+    var cameraPanRecognizer: UIPanGestureRecognizer? {
+        didSet { applyPanTouchTypes() }
+    }
 
     private var keyboardCaptureEnabled = true
     private var heldKeys: Set<GameHardwareKey> = []
@@ -2166,6 +2082,20 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
         }
     }
 
+    private func applyPanTouchTypes() {
+        guard let pan = cameraPanRecognizer else { return }
+        if usesClickDragOrbit {
+            // Direct finger + mouse/trackpad click-drag.
+            pan.allowedTouchTypes = [
+                NSNumber(value: UITouch.TouchType.direct.rawValue),
+                NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            ]
+        } else {
+            // Phones / free mouse-look: touch drag only (pointer uses GCMouse / hover).
+            pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        }
+    }
+
     private func startMouseMonitoring() {
         guard mouseObservers.isEmpty else { return }
         let center = NotificationCenter.default
@@ -2188,8 +2118,12 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
 
     private func bindMouseLook() {
         for mouse in GCMouse.mice() {
+            guard pointerLookEnabled, !usesClickDragOrbit else {
+                mouse.mouseInput?.mouseMovedHandler = nil
+                continue
+            }
             mouse.mouseInput?.mouseMovedHandler = { [weak self] (_: GCMouseInput, deltaX: Float, deltaY: Float) in
-                guard let self, self.pointerLookEnabled else { return }
+                guard let self, self.pointerLookEnabled, !self.usesClickDragOrbit else { return }
                 let dx = deltaX * self.mouseLookSensitivity
                 let dy = deltaY * self.mouseLookSensitivity
                 if abs(dx) > 0.0001 || abs(dy) > 0.0001 {
@@ -2323,6 +2257,11 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
     }
 
     @objc func handleCameraHover(_ gesture: UIHoverGestureRecognizer) {
+        // Click-drag mode: orbit only via pan while the button is held.
+        guard !usesClickDragOrbit else {
+            lastHoverPoint = nil
+            return
+        }
         // Prefer GCMouse relative deltas while locked; hover is a fallback.
         guard !PointerLockBridge.isSystemLocked else {
             lastHoverPoint = nil
@@ -2398,6 +2337,7 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
         case .keyboardSpacebar: return .jump
         case .keyboardE: return .action
         case .keyboardQ: return .toolCycle
+        case .keyboardM: return .missions
         case .keyboardEscape: return .escape
         default:
             break
@@ -2410,6 +2350,7 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
         case "d": return .moveRight
         case "e": return .action
         case "q": return .toolCycle
+        case "m": return .missions
         case "r": return .run
         case " ": return .jump
         default: return nil

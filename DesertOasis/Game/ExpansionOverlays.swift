@@ -163,68 +163,145 @@ struct DiaryOverlayView: View {
     var revealID: String?
     var onClose: () -> Void
 
+    private var resolvedPages: [(id: String, title: String, body: String)] {
+        pageIDs.compactMap { id in
+            guard let page = DiaryCatalog.page(id: id) else { return nil }
+            return (id, page.title, page.body)
+        }
+    }
+
     var body: some View {
         ZStack {
-            Color.black.opacity(0.6).ignoresSafeArea()
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .onTapGesture { onClose() }
 
             VStack(spacing: 0) {
-                HStack {
+                HStack(spacing: 12) {
                     Button(action: onClose) {
-                        Label("Back", systemImage: "chevron.left")
-                            .font(.system(.subheadline, design: .serif, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.8))
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(.white.opacity(0.12), in: Circle())
                     }
                     .buttonStyle(.plain)
-                    Spacer()
-                    Text("Keeper's Diary")
-                        .font(.system(.title3, design: .serif, weight: .bold))
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Color.clear.frame(width: 60)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Keeper's Diary")
+                            .font(.system(.title3, design: .serif, weight: .bold))
+                            .foregroundStyle(.white)
+                        Text("\(resolvedPages.count) of \(DiaryCatalog.allIDs.count) pages")
+                            .font(.system(.caption2, design: .serif, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Image(systemName: "book.closed.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22).opacity(0.9))
                 }
-                .padding(16)
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+                .padding(.bottom, 14)
 
-                Divider().background(.white.opacity(0.12))
-
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        if pageIDs.isEmpty {
-                            Text("Dreams will fill these pages as you restore the oasis.")
-                                .font(.system(.subheadline, design: .serif))
-                                .foregroundStyle(.white.opacity(0.5))
-                                .padding(.top, 40)
-                                .frame(maxWidth: .infinity)
-                        }
-                        ForEach(pageIDs, id: \.self) { id in
-                            if let page = DiaryCatalog.page(id: id) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(page.title)
-                                        .font(.system(.callout, design: .serif, weight: .bold))
-                                        .foregroundStyle(id == revealID
-                                                         ? Color(red: 0.95, green: 0.78, blue: 0.22)
-                                                         : .white)
-                                    Text(page.body)
-                                        .font(.system(.subheadline, design: .serif))
-                                        .foregroundStyle(.white.opacity(0.75))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                .padding(14)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.07)))
+                if resolvedPages.isEmpty {
+                    emptyState
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 24)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(resolvedPages, id: \.id) { entry in
+                                diaryPageCard(id: entry.id, title: entry.title, body: entry.body)
                             }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 18)
                     }
-                    .padding(16)
+                    .frame(maxHeight: 440)
                 }
             }
-            .frame(maxWidth: 500)
+            .frame(maxWidth: 440)
+            .fixedSize(horizontal: false, vertical: true)
             .background(
                 RoundedRectangle(cornerRadius: 22)
                     .fill(Color(red: 0.09, green: 0.07, blue: 0.05).opacity(0.97))
-                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(.white.opacity(0.12), lineWidth: 1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22)
+                            .stroke(.white.opacity(0.14), lineWidth: 1)
+                    )
             )
-            .padding(20)
+            .padding(24)
         }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(Color(red: 0.95, green: 0.78, blue: 0.22).opacity(0.12))
+                    .frame(width: 72, height: 72)
+                Image(systemName: "book.closed.fill")
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22))
+            }
+
+            Text("No pages yet")
+                .font(.system(.headline, design: .serif, weight: .bold))
+                .foregroundStyle(.white)
+
+            Text("Dreams will fill these pages as you restore the oasis — sleep after milestones, and seek landmarks in the dunes.")
+                .font(.system(.subheadline, design: .serif))
+                .foregroundStyle(.white.opacity(0.55))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.white.opacity(0.05))
+        )
+    }
+
+    private func diaryPageCard(id: String, title: String, body: String) -> some View {
+        let isReveal = id == revealID
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: isReveal ? "sparkles" : "doc.text")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(isReveal
+                                     ? Color(red: 0.95, green: 0.78, blue: 0.22)
+                                     : .white.opacity(0.4))
+                Text(title)
+                    .font(.system(.callout, design: .serif, weight: .bold))
+                    .foregroundStyle(isReveal
+                                     ? Color(red: 0.95, green: 0.78, blue: 0.22)
+                                     : .white)
+            }
+            Text(body)
+                .font(.system(.subheadline, design: .serif))
+                .foregroundStyle(.white.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.white.opacity(isReveal ? 0.10 : 0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(
+                            isReveal
+                                ? Color(red: 0.95, green: 0.78, blue: 0.22).opacity(0.35)
+                                : Color.white.opacity(0.06),
+                            lineWidth: 1
+                        )
+                )
+        )
     }
 }
 
@@ -234,64 +311,125 @@ struct AchievementsOverlayView: View {
     let manager: AchievementManager
     var onClose: () -> Void
 
+    private var unlockedCount: Int {
+        AchievementManager.catalog.filter { manager.isUnlocked($0.id) }.count
+    }
+
     var body: some View {
         ZStack {
-            Color.black.opacity(0.6).ignoresSafeArea()
+            Color.black.opacity(0.60).ignoresSafeArea()
 
             VStack(spacing: 0) {
-                HStack {
-                    Button(action: onClose) {
-                        Label("Back", systemImage: "chevron.left")
-                            .font(.system(.subheadline, design: .serif, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.8))
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                    Text("Achievements")
-                        .font(.system(.title3, design: .serif, weight: .bold))
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Color.clear.frame(width: 60)
-                }
-                .padding(16)
+                headerBar
 
                 Divider().background(.white.opacity(0.12))
 
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(AchievementManager.catalog) { def in
-                            let unlocked = manager.isUnlocked(def.id)
-                            HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: unlocked ? "medal.fill" : "lock.fill")
-                                    .foregroundStyle(unlocked
-                                                     ? Color(red: 0.95, green: 0.78, blue: 0.22)
-                                                     : .white.opacity(0.35))
-                                    .frame(width: 24)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(def.title)
-                                        .font(.system(.subheadline, design: .serif, weight: .bold))
-                                        .foregroundStyle(unlocked ? .white : .white.opacity(0.45))
-                                    Text(def.body)
-                                        .font(.system(.caption, design: .serif))
-                                        .foregroundStyle(.white.opacity(unlocked ? 0.65 : 0.3))
-                                }
-                                Spacer()
-                            }
-                            .padding(12)
-                            .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.06)))
+                            achievementRow(def, unlocked: manager.isUnlocked(def.id))
                         }
                     }
-                    .padding(16)
+                    .padding(20)
                 }
             }
-            .frame(maxWidth: 500)
             .background(
                 RoundedRectangle(cornerRadius: 22)
                     .fill(Color(red: 0.09, green: 0.07, blue: 0.05).opacity(0.97))
-                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(.white.opacity(0.12), lineWidth: 1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22)
+                            .stroke(.white.opacity(0.12), lineWidth: 1)
+                    )
             )
-            .padding(20)
+            .frame(maxWidth: 500)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 44)
         }
+    }
+
+    private var headerBar: some View {
+        HStack {
+            Button { onClose() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Back")
+                        .font(.system(.subheadline, design: .serif, weight: .semibold))
+                }
+                .foregroundStyle(.white.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            VStack(spacing: 2) {
+                HStack(spacing: 7) {
+                    Image(systemName: "trophy.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22).opacity(0.9))
+                    Text("Achievements")
+                        .font(.system(.title3, design: .serif, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                Text("\(unlockedCount) of \(AchievementManager.catalog.count) unlocked")
+                    .font(.system(.caption2, design: .serif, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+
+            Spacer()
+
+            // Visual balance for the back button
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.left").opacity(0)
+                Text("Back").opacity(0)
+            }
+            .font(.system(.subheadline))
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+    }
+
+    private func achievementRow(_ def: AchievementDefinition, unlocked: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: unlocked ? "medal.fill" : "lock.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(unlocked
+                                 ? Color(red: 0.95, green: 0.78, blue: 0.22)
+                                 : .white.opacity(0.35))
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(unlocked
+                              ? Color(red: 0.95, green: 0.78, blue: 0.22).opacity(0.14)
+                              : Color.white.opacity(0.06))
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(def.title)
+                    .font(.system(.subheadline, design: .serif, weight: .bold))
+                    .foregroundStyle(unlocked ? .white : .white.opacity(0.5))
+                Text(def.body)
+                    .font(.system(.caption, design: .serif))
+                    .foregroundStyle(.white.opacity(unlocked ? 0.65 : 0.32))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.white.opacity(unlocked ? 0.08 : 0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(
+                            unlocked
+                                ? Color(red: 0.95, green: 0.78, blue: 0.22).opacity(0.28)
+                                : Color.white.opacity(0.05),
+                            lineWidth: 1
+                        )
+                )
+        )
     }
 }
 

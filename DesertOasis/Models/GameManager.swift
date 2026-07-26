@@ -19,6 +19,10 @@ final class GameManager {
     var soundEnabled: Bool = true
     /// Visible sun, moon, and clouds — disable for weaker devices.
     var skyDetailsEnabled: Bool = true
+    /// Mac only: click-and-drag orbit with a visible cursor (off = pointer-locked mouse look).
+    var macClickDragCamera: Bool = false
+    /// Mac only: invert camera pitch while orbiting.
+    var invertCameraVertical: Bool = false
 
     #if DEBUG
     /// Live FPS readout while playing.
@@ -29,10 +33,21 @@ final class GameManager {
     var showCampZoneDebug: Bool = false
     #endif
 
+    /// Designed for iPad on Mac, or Mac Catalyst.
+    static var isMacPlatform: Bool {
+        #if targetEnvironment(macCatalyst)
+        true
+        #else
+        ProcessInfo.processInfo.isiOSAppOnMac
+        #endif
+    }
+
     private let slotsKey = "DesertOasis_SaveSlots"
     private let musicKey = "DesertOasis_Music"
     private let soundKey = "DesertOasis_Sound"
     private let skyDetailsKey = "DesertOasis_SkyDetails"
+    private let macClickDragCameraKey = "DesertOasis_MacClickDragCamera"
+    private let invertCameraVerticalKey = "DesertOasis_InvertCameraVertical"
     #if DEBUG
     private let showFPSKey = "DesertOasis_DebugShowFPS"
     private let benchmarkKey = "DesertOasis_DebugBenchmark"
@@ -73,6 +88,8 @@ final class GameManager {
         musicEnabled = UserDefaults.standard.object(forKey: musicKey) as? Bool ?? true
         soundEnabled = UserDefaults.standard.object(forKey: soundKey) as? Bool ?? true
         skyDetailsEnabled = UserDefaults.standard.object(forKey: skyDetailsKey) as? Bool ?? true
+        macClickDragCamera = UserDefaults.standard.object(forKey: macClickDragCameraKey) as? Bool ?? false
+        invertCameraVertical = UserDefaults.standard.object(forKey: invertCameraVerticalKey) as? Bool ?? false
         #if DEBUG
         showFPSOverlay = UserDefaults.standard.object(forKey: showFPSKey) as? Bool ?? false
         benchmarkEnabled = UserDefaults.standard.object(forKey: benchmarkKey) as? Bool ?? false
@@ -104,6 +121,8 @@ final class GameManager {
         UserDefaults.standard.set(musicEnabled, forKey: musicKey)
         UserDefaults.standard.set(soundEnabled, forKey: soundKey)
         UserDefaults.standard.set(skyDetailsEnabled, forKey: skyDetailsKey)
+        UserDefaults.standard.set(macClickDragCamera, forKey: macClickDragCameraKey)
+        UserDefaults.standard.set(invertCameraVertical, forKey: invertCameraVerticalKey)
         #if DEBUG
         UserDefaults.standard.set(showFPSOverlay, forKey: showFPSKey)
         UserDefaults.standard.set(benchmarkEnabled, forKey: benchmarkKey)
