@@ -147,7 +147,7 @@ struct TitleOverlayView: View {
             Spacer()
             VStack(spacing: 12) {
                 Text("Touch to Begin")
-                    .font(.system(size: 18, weight: .medium, design: .serif))
+                    .font(.system(.title3, design: .serif, weight: .medium))
                     .foregroundStyle(.white.opacity(0.7))
                     .shadow(color: .black.opacity(0.8), radius: 4)
             }
@@ -214,11 +214,11 @@ struct SlotSelectionOverlayView: View {
             VStack(spacing: 14) {
                 VStack(spacing: 4) {
                     Text("Choose Your Adventure")
-                        .font(.system(size: 18, weight: .bold, design: .serif))
+                        .font(.system(.title3, design: .serif, weight: .bold))
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.7), radius: 4)
                     Text("Open a diary on the bed")
-                        .font(.system(size: 12, weight: .medium, design: .serif))
+                        .font(.system(.caption, design: .serif, weight: .medium))
                         .foregroundStyle(.white.opacity(0.55))
                         .shadow(color: .black.opacity(0.6), radius: 3)
                 }
@@ -295,10 +295,10 @@ struct SlotCardView: View {
 
             VStack(spacing: 3) {
                 Text("New Journey")
-                    .font(.system(size: 14, weight: .bold, design: .serif))
+                    .font(.system(.subheadline, design: .serif, weight: .bold))
                     .foregroundStyle(.white.opacity(0.9))
                 Text("Blank pages await")
-                    .font(.system(size: 11, design: .serif))
+                    .font(.system(.caption2, design: .serif))
                     .foregroundStyle(.white.opacity(0.45))
             }
         }
@@ -310,7 +310,7 @@ struct SlotCardView: View {
         VStack(spacing: 10) {
             HStack {
                 Text("JOURNAL \(journalLabel)")
-                    .font(.system(size: 10, weight: .bold, design: .serif))
+                    .font(.system(.caption2, design: .serif, weight: .bold))
                     .tracking(1.6)
                     .foregroundStyle(accent.opacity(0.85))
                 Spacer()
@@ -338,10 +338,10 @@ struct SlotCardView: View {
 
             VStack(spacing: 2) {
                 Text(travelerLabel)
-                    .font(.system(size: 13, weight: .bold, design: .serif))
+                    .font(.system(.footnote, design: .serif, weight: .bold))
                     .foregroundStyle(.white)
                 Text(slot.displayName)
-                    .font(.system(size: 10, weight: .medium, design: .serif))
+                    .font(.system(.caption2, design: .serif, weight: .medium))
                     .foregroundStyle(.white.opacity(0.45))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -403,7 +403,7 @@ struct SlotCardView: View {
             Text("\(value)")
                 .foregroundStyle(.white)
         }
-        .font(.system(size: 10, weight: .bold))
+        .font(.system(.caption2, weight: .bold))
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .background(.black.opacity(0.45), in: Capsule())
@@ -435,12 +435,12 @@ struct CharacterSelectionOverlayView: View {
 
             VStack(spacing: 16) {
                 Text("Who will you be?")
-                    .font(.system(size: 18, weight: .semibold, design: .serif))
+                    .font(.system(.title3, design: .serif, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.9))
                     .shadow(color: .black, radius: 4)
 
                 Text("Tap a traveler to begin")
-                    .font(.system(size: 13, design: .serif))
+                    .font(.system(.footnote, design: .serif))
                     .foregroundStyle(.white.opacity(0.55))
 
                 HStack(spacing: 20) {
@@ -449,7 +449,7 @@ struct CharacterSelectionOverlayView: View {
                             onSelect(gender)
                         } label: {
                             Text(gender.displayName)
-                                .font(.system(size: 15, weight: .semibold, design: .serif))
+                                .font(.system(.subheadline, design: .serif, weight: .semibold))
                                 .foregroundStyle(Color(red: 0.15, green: 0.1, blue: 0.05))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 14)
@@ -479,7 +479,7 @@ struct SettingsOverlayView: View {
     var onReturnToMainScreen: (() -> Void)? = nil
 
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             HStack {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
@@ -502,51 +502,71 @@ struct SettingsOverlayView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
 
-            Spacer()
+            ScrollView {
+                VStack(spacing: 0) {
+                    Text("Settings")
+                        .font(.system(.title2, design: .serif, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.bottom, 20)
 
-            VStack(spacing: 0) {
-                Text("Settings")
-                    .font(.system(size: 22, weight: .bold, design: .serif))
-                    .foregroundStyle(.white)
-                    .padding(.bottom, 20)
+                    VStack(spacing: 1) {
+                        settingRow(title: "Music", icon: "music.note", isOn: $gameManager.musicEnabled)
+                        settingRow(title: "Sound Effects", icon: "speaker.wave.2", isOn: $gameManager.soundEnabled)
+                        settingRow(title: "Sky Details", icon: "cloud.sun", isOn: $gameManager.skyDetailsEnabled)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
 
-                VStack(spacing: 1) {
-                    settingRow(title: "Music", icon: "music.note", isOn: $gameManager.musicEnabled)
-                    settingRow(title: "Sound Effects", icon: "speaker.wave.2", isOn: $gameManager.soundEnabled)
-                    settingRow(title: "Sky Details", icon: "cloud.sun", isOn: $gameManager.skyDetailsEnabled)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                    #if DEBUG
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Debug")
+                            .font(.system(.footnote, design: .serif, weight: .semibold))
+                            .foregroundStyle(.orange.opacity(0.85))
+                            .padding(.top, 16)
+                            .padding(.leading, 4)
 
-                if let onReturnToMainScreen {
-                    Button(action: onReturnToMainScreen) {
-                        HStack {
-                            Image(systemName: "house")
-                                .frame(width: 24)
-                                .foregroundStyle(.orange)
-                            Text("Back to Main Screen")
-                                .font(.system(size: 16, design: .serif))
-                                .foregroundStyle(.white)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.35))
+                        VStack(spacing: 1) {
+                            settingRow(title: "FPS Overlay", icon: "speedometer", isOn: $gameManager.showFPSOverlay)
+                            settingRow(title: "Benchmark", icon: "chart.bar", isOn: $gameManager.benchmarkEnabled)
+                            settingRow(title: "Camp Zone Markers", icon: "mappin.and.ellipse", isOn: $gameManager.showCampZoneDebug)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        .background(.black.opacity(0.5))
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
-                    .buttonStyle(.plain)
-                    .padding(.top, 12)
-                }
+                    #endif
 
-                Text("Desert Oasis  v1.0")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.3))
-                    .padding(.top, 20)
+                    if let onReturnToMainScreen {
+                        Button(action: onReturnToMainScreen) {
+                            HStack {
+                                Image(systemName: "house")
+                                    .frame(width: 24)
+                                    .foregroundStyle(.orange)
+                                Text("Back to Main Screen")
+                                    .font(.system(.callout, design: .serif))
+                                    .foregroundStyle(.white)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.35))
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 12)
+                    }
+
+                    Text("Oasis Keeper  v1.0")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.3))
+                        .padding(.top, 20)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 32)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 16)
+            .scrollIndicators(.hidden)
         }
     }
 

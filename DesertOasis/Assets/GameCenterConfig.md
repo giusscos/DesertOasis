@@ -107,19 +107,19 @@ All leaderboards use **Integer** score type, **Descending** order (higher is bet
 
 | # | Reference Name | ID | Display Name | Score Label |
 |---|---|---|---|---|
-| 1 | Water Deliveries | `desert_oasis.deliveries` | Water Deliveries | Buckets Delivered |
-| 2 | Oases Discovered | `desert_oasis.oases` | Oases Discovered | Oases Found |
-| 3 | Wanderers Helped | `desert_oasis.wanderers` | Wanderers Helped | Travellers Helped |
+| 1 | Water Deliveries | `oasis_keeper.deliveries` | Water Deliveries | Buckets Delivered |
+| 2 | Oases Discovered | `oasis_keeper.oases` | Oases Discovered | Oases Found |
+| 3 | Wanderers Helped | `oasis_keeper.wanderers` | Wanderers Helped | Travellers Helped |
 
 ### Leaderboard Descriptions
 
-**1 · Water Deliveries** (`desert_oasis.deliveries`)
+**1 · Water Deliveries** (`oasis_keeper.deliveries`)
 - How many buckets of water you have delivered to camp barrels across all sessions.
 
-**2 · Oases Discovered** (`desert_oasis.oases`)
+**2 · Oases Discovered** (`oasis_keeper.oases`)
 - How many oases you have found hidden in the dunes.
 
-**3 · Wanderers Helped** (`desert_oasis.wanderers`)
+**3 · Wanderers Helped** (`oasis_keeper.wanderers`)
 - How many weary travellers you have given water to out in the desert.
 
 ---
@@ -153,9 +153,9 @@ Upload the coloured file as the **earned** image and the `_locked` file as the *
 
 | ID | Image |
 |---|---|
-| `desert_oasis.deliveries` | `Leaderboards/desert_oasis.deliveries.png` |
-| `desert_oasis.oases` | `Leaderboards/desert_oasis.oases.png` |
-| `desert_oasis.wanderers` | `Leaderboards/desert_oasis.wanderers.png` |
+| `oasis_keeper.deliveries` | `Leaderboards/oasis_keeper.deliveries.png` |
+| `oasis_keeper.oases` | `Leaderboards/oasis_keeper.oases.png` |
+| `oasis_keeper.wanderers` | `Leaderboards/oasis_keeper.wanderers.png` |
 
 ---
 

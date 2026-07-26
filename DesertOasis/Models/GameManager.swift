@@ -18,10 +18,24 @@ final class GameManager {
     /// Visible sun, moon, and clouds — disable for weaker devices.
     var skyDetailsEnabled: Bool = true
 
+    #if DEBUG
+    /// Live FPS readout while playing.
+    var showFPSOverlay: Bool = false
+    /// Accumulate avg / min / max FPS and stability while enabled.
+    var benchmarkEnabled: Bool = false
+    /// World markers + HUD for undiscovered camping zones.
+    var showCampZoneDebug: Bool = false
+    #endif
+
     private let slotsKey = "DesertOasis_SaveSlots"
     private let musicKey = "DesertOasis_Music"
     private let soundKey = "DesertOasis_Sound"
     private let skyDetailsKey = "DesertOasis_SkyDetails"
+    #if DEBUG
+    private let showFPSKey = "DesertOasis_DebugShowFPS"
+    private let benchmarkKey = "DesertOasis_DebugBenchmark"
+    private let campZoneDebugKey = "DesertOasis_DebugCampZones"
+    #endif
 
     var gameCenter = GameCenterManager()
     @ObservationIgnored private var kvStoreObserver: NSObjectProtocol?
@@ -44,6 +58,11 @@ final class GameManager {
         musicEnabled = UserDefaults.standard.object(forKey: musicKey) as? Bool ?? true
         soundEnabled = UserDefaults.standard.object(forKey: soundKey) as? Bool ?? true
         skyDetailsEnabled = UserDefaults.standard.object(forKey: skyDetailsKey) as? Bool ?? true
+        #if DEBUG
+        showFPSOverlay = UserDefaults.standard.object(forKey: showFPSKey) as? Bool ?? false
+        benchmarkEnabled = UserDefaults.standard.object(forKey: benchmarkKey) as? Bool ?? false
+        showCampZoneDebug = UserDefaults.standard.object(forKey: campZoneDebugKey) as? Bool ?? false
+        #endif
         let kvStore = NSUbiquitousKeyValueStore.default
         kvStore.synchronize()
         if let data = kvStore.data(forKey: slotsKey),
@@ -67,6 +86,11 @@ final class GameManager {
         UserDefaults.standard.set(musicEnabled, forKey: musicKey)
         UserDefaults.standard.set(soundEnabled, forKey: soundKey)
         UserDefaults.standard.set(skyDetailsEnabled, forKey: skyDetailsKey)
+        #if DEBUG
+        UserDefaults.standard.set(showFPSOverlay, forKey: showFPSKey)
+        UserDefaults.standard.set(benchmarkEnabled, forKey: benchmarkKey)
+        UserDefaults.standard.set(showCampZoneDebug, forKey: campZoneDebugKey)
+        #endif
     }
 
     private func reloadSlotsFromCloud() {
@@ -74,6 +98,7 @@ final class GameManager {
               let synced = try? JSONDecoder().decode([SaveSlot].self, from: data)
         else { return }
         for (i, slot) in synced.enumerated() {
+            guard i < saveSlots.count else { break }
             if case .playing(let activeIdx) = currentScreen, activeIdx == i { continue }
             saveSlots[i] = slot
         }

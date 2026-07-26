@@ -15,7 +15,7 @@ struct DialogueView: View {
                     .fill(npc?.personality.shirtColor.swiftUIColor ?? .orange)
                     .frame(width: 10, height: 10)
                 Text(npc.map { nameFor($0.personality) } ?? "Stranger")
-                    .font(.system(size: 13, weight: .bold, design: .serif))
+                    .font(.system(.footnote, design: .serif, weight: .bold))
                     .foregroundStyle(.white)
                 Spacer()
                 Button {
@@ -77,7 +77,7 @@ struct DialogueView: View {
             // Input bar
             HStack(spacing: 10) {
                 TextField("Say something…", text: $inputText)
-                    .font(.system(size: 14, design: .serif))
+                    .font(.system(.subheadline, design: .serif))
                     .foregroundStyle(.white)
                     .tint(.orange)
                     .focused($inputFocused)
@@ -139,7 +139,7 @@ struct ChatBubble: View {
             if isPlayer { Spacer(minLength: 40) }
 
             Text(message.text)
-                .font(.system(size: 14, design: .serif))
+                .font(.system(.subheadline, design: .serif))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)

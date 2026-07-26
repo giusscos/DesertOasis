@@ -1,4 +1,4 @@
-# Desert Oasis – Camp & Tool Asset Prompt
+# Oasis Keeper – Camp & Tool Asset Prompt
 
 Use these prompts in Claude Code (or another AI assistant with Blender/Python access)
 to generate the gameplay props for the camp / water-delivery loop. Each section is
@@ -24,7 +24,7 @@ tent exists. Prefer new props below over duplicating lobby-only furniture.
 
 **Prompt:**
 
-Create a camp water-delivery prop for Desert Oasis in Blender using Python (bpy).
+Create a camp water-delivery prop for Oasis Keeper in Blender using Python (bpy).
 Style: low-poly Zelda Wind Waker, weathered desert camp. Export as `.usdz`.
 
 ### `prop_water_barrel.usdz`
@@ -50,7 +50,7 @@ Style: low-poly Zelda Wind Waker, weathered desert camp. Export as `.usdz`.
 
 **Prompt:**
 
-Create three handheld adventure tools for Desert Oasis in Blender using Python (bpy).
+Create three handheld adventure tools for Oasis Keeper in Blender using Python (bpy).
 Style: low-poly Zelda Wind Waker, readable silhouette from third-person camera.
 Export each as `.usdz`. Origin at the **grip** (where a hand would hold it) so they
 parent cleanly to a character hand bone later. Faces +Z when held “forward.”
@@ -100,7 +100,7 @@ parent cleanly to a character hand bone later. Faces +Z when held “forward.”
 
 **Prompt:**
 
-Create optional camp props for Desert Oasis. Same low-poly Wind Waker desert style.
+Create optional camp props for Oasis Keeper. Same low-poly Wind Waker desert style.
 Export each as `.usdz`.
 
 | File | Description |

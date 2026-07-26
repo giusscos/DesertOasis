@@ -8,9 +8,9 @@ final class GameCenterManager {
     private(set) var isAuthenticated = false
 
     enum Leaderboard {
-        static let waterDeliveries = "desert_oasis.deliveries"
-        static let oasesFound     = "desert_oasis.oases"
-        static let wanderers      = "desert_oasis.wanderers"
+        static let waterDeliveries = "oasis_keeper.deliveries"
+        static let oasesFound     = "oasis_keeper.oases"
+        static let wanderers      = "oasis_keeper.wanderers"
     }
 
     func authenticate() {

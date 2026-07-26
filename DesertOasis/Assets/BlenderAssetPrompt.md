@@ -1,4 +1,4 @@
-# Desert Oasis – Blender Asset Prompt
+# Oasis Keeper – Blender Asset Prompt
 
 Use these prompts in Claude Code (or another AI assistant with Blender/Python access)
 to generate the 3D assets for the game. Each section is self-contained and can be
@@ -66,7 +66,7 @@ Style: slightly stylised/low-poly, warm and cosy. Export each as `.usdz`.
 - Tent poles in dark weathered wood.
 - Inner dimensions: 8 m wide × 10 m deep × 4 m peak height.
 - Include a hanging lantern at the apex, emitting warm orange glow (use an emissive material).
-- A wooden sign plank above the entrance area, reading **"Desert Oasis"** in carved wooden letters (the text geometry should be a child node named `sign_text`).
+- A wooden sign plank above the entrance area, reading **"Oasis Keeper"** in carved wooden letters (the text geometry should be a child node named `sign_text`).
 
 ### 3b. Desert Bed with Diaries (`lobby_bed.usdz`)
 - Old-fashioned camp cot: wooden frame, off-white canvas mattress, small pillow.

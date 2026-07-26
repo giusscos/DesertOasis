@@ -15,7 +15,7 @@ struct ToolPickerOverlay: View {
 
             VStack(spacing: 14) {
                 Text("Tools")
-                    .font(.system(size: 22, weight: .bold, design: .serif))
+                    .font(.system(.title2, design: .serif, weight: .bold))
                     .foregroundStyle(.white)
 
                 ForEach(unlocked) { tool in
@@ -27,7 +27,7 @@ struct ToolPickerOverlay: View {
                                 .font(.system(size: 18, weight: .semibold))
                                 .frame(width: 28)
                             Text(tool.displayName)
-                                .font(.system(size: 16, weight: .semibold, design: .serif))
+                                .font(.system(.callout, design: .serif, weight: .semibold))
                             Spacer()
                             if tool == equipped {
                                 Image(systemName: "checkmark.circle.fill")
@@ -48,7 +48,7 @@ struct ToolPickerOverlay: View {
                 }
 
                 Button("Close", action: onClose)
-                    .font(.system(size: 14, weight: .semibold, design: .serif))
+                    .font(.system(.subheadline, design: .serif, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.7))
                     .padding(.top, 4)
             }
@@ -80,17 +80,17 @@ struct TradeOverlayView: View {
                 HStack {
                     Button(action: onClose) {
                         Label("Back", systemImage: "chevron.left")
-                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                     Spacer()
                     Text("Merchant Trade")
-                        .font(.system(size: 20, weight: .bold, design: .serif))
+                        .font(.system(.title3, design: .serif, weight: .bold))
                         .foregroundStyle(.white)
                     Spacer()
                     Label("\(beads)", systemImage: "circle.hexagongrid.fill")
-                        .font(.system(size: 14, weight: .bold, design: .serif))
+                        .font(.system(.subheadline, design: .serif, weight: .bold))
                         .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22))
                 }
                 .padding(16)
@@ -124,23 +124,23 @@ struct TradeOverlayView: View {
                 .frame(width: 32)
             VStack(alignment: .leading, spacing: 2) {
                 Text(good.displayName)
-                    .font(.system(size: 16, weight: .bold, design: .serif))
+                    .font(.system(.callout, design: .serif, weight: .bold))
                     .foregroundStyle(.white)
                 Text(good.detail)
-                    .font(.system(size: 12, design: .serif))
+                    .font(.system(.caption, design: .serif))
                     .foregroundStyle(.white.opacity(0.55))
             }
             Spacer()
             if owned && good != .mapScrap {
                 Text("Owned")
-                    .font(.system(size: 12, weight: .semibold, design: .serif))
+                    .font(.system(.caption, design: .serif, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.45))
             } else {
                 Button {
                     onBuy(good)
                 } label: {
                     Text("\(good.cost)")
-                        .font(.system(size: 14, weight: .bold, design: .serif))
+                        .font(.system(.subheadline, design: .serif, weight: .bold))
                         .foregroundStyle(.black)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -171,13 +171,13 @@ struct DiaryOverlayView: View {
                 HStack {
                     Button(action: onClose) {
                         Label("Back", systemImage: "chevron.left")
-                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                     Spacer()
                     Text("Keeper's Diary")
-                        .font(.system(size: 20, weight: .bold, design: .serif))
+                        .font(.system(.title3, design: .serif, weight: .bold))
                         .foregroundStyle(.white)
                     Spacer()
                     Color.clear.frame(width: 60)
@@ -190,7 +190,7 @@ struct DiaryOverlayView: View {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         if pageIDs.isEmpty {
                             Text("Dreams will fill these pages as you restore the oasis.")
-                                .font(.system(size: 15, design: .serif))
+                                .font(.system(.subheadline, design: .serif))
                                 .foregroundStyle(.white.opacity(0.5))
                                 .padding(.top, 40)
                                 .frame(maxWidth: .infinity)
@@ -199,12 +199,12 @@ struct DiaryOverlayView: View {
                             if let page = DiaryCatalog.page(id: id) {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(page.title)
-                                        .font(.system(size: 16, weight: .bold, design: .serif))
+                                        .font(.system(.callout, design: .serif, weight: .bold))
                                         .foregroundStyle(id == revealID
                                                          ? Color(red: 0.95, green: 0.78, blue: 0.22)
                                                          : .white)
                                     Text(page.body)
-                                        .font(.system(size: 14, design: .serif))
+                                        .font(.system(.subheadline, design: .serif))
                                         .foregroundStyle(.white.opacity(0.75))
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
@@ -242,13 +242,13 @@ struct AchievementsOverlayView: View {
                 HStack {
                     Button(action: onClose) {
                         Label("Back", systemImage: "chevron.left")
-                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                     Spacer()
                     Text("Achievements")
-                        .font(.system(size: 20, weight: .bold, design: .serif))
+                        .font(.system(.title3, design: .serif, weight: .bold))
                         .foregroundStyle(.white)
                     Spacer()
                     Color.clear.frame(width: 60)
@@ -269,10 +269,10 @@ struct AchievementsOverlayView: View {
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(def.title)
-                                        .font(.system(size: 15, weight: .bold, design: .serif))
+                                        .font(.system(.subheadline, design: .serif, weight: .bold))
                                         .foregroundStyle(unlocked ? .white : .white.opacity(0.45))
                                     Text(def.body)
-                                        .font(.system(size: 12, design: .serif))
+                                        .font(.system(.caption, design: .serif))
                                         .foregroundStyle(.white.opacity(unlocked ? 0.65 : 0.3))
                                 }
                                 Spacer()
@@ -307,9 +307,9 @@ struct ToolActionButton: View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 3) {
                 Image(systemName: tool.systemImage)
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(.title3, weight: .bold))
                 Text("Tool")
-                    .font(.system(size: 10, weight: .bold, design: .serif))
+                    .font(.system(.caption2, design: .serif, weight: .bold))
             }
             .foregroundStyle(.white)
             .frame(width: 64, height: 64)
@@ -397,7 +397,7 @@ struct DetectorHUDView: View {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .font(.system(size: 12, weight: .bold))
                 Text("Water")
-                    .font(.system(size: 11, weight: .bold, design: .serif))
+                    .font(.system(.caption2, design: .serif, weight: .bold))
             }
             .foregroundStyle(.white)
 
@@ -430,3 +430,157 @@ struct DetectorHUDView: View {
         .accessibilityLabel("Water detector signal")
     }
 }
+
+#if DEBUG
+
+// MARK: - Debug performance
+
+@Observable
+final class PerformanceMonitor {
+    var currentFPS: Float = 0
+    var avgFPS: Float = 0
+    var minFPS: Float = 0
+    var maxFPS: Float = 0
+    /// Share of frames at ≥55 FPS (0…100).
+    var stabilityPercent: Float = 0
+    var sampleCount: Int = 0
+    var isBenchmarking = false
+
+    private var smoothedFPS: Float = 60
+    private var sumFPS: Double = 0
+    private var frameCount: Int = 0
+    private var minSeen: Float = .greatestFiniteMagnitude
+    private var maxSeen: Float = 0
+    private var stableFrames: Int = 0
+    private var publishAccumulator: Float = 0
+
+    func resetBenchmark() {
+        sumFPS = 0
+        frameCount = 0
+        minSeen = .greatestFiniteMagnitude
+        maxSeen = 0
+        stableFrames = 0
+        avgFPS = 0
+        minFPS = 0
+        maxFPS = 0
+        stabilityPercent = 0
+        sampleCount = 0
+    }
+
+    func setBenchmarking(_ enabled: Bool) {
+        isBenchmarking = enabled
+        if enabled { resetBenchmark() }
+    }
+
+    func sample(deltaTime: Float) {
+        guard deltaTime > 0.000_05, deltaTime < 1 else { return }
+        let fps = 1 / deltaTime
+        smoothedFPS = smoothedFPS * 0.85 + fps * 0.15
+
+        if isBenchmarking {
+            frameCount += 1
+            sumFPS += Double(fps)
+            minSeen = min(minSeen, fps)
+            maxSeen = max(maxSeen, fps)
+            if fps >= 55 { stableFrames += 1 }
+        }
+
+        publishAccumulator += deltaTime
+        guard publishAccumulator >= 0.12 else { return }
+        publishAccumulator = 0
+        currentFPS = smoothedFPS
+        guard isBenchmarking, frameCount > 0 else { return }
+        avgFPS = Float(sumFPS / Double(frameCount))
+        minFPS = minSeen
+        maxFPS = maxSeen
+        stabilityPercent = Float(stableFrames) / Float(frameCount) * 100
+        sampleCount = frameCount
+    }
+}
+
+struct FPSDebugOverlay: View {
+    let monitor: PerformanceMonitor
+    var showFPS: Bool
+    var showBenchmark: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if showFPS {
+                Text(String(format: "FPS  %.0f", monitor.currentFPS))
+                    .font(.system(.footnote, design: .monospaced, weight: .bold))
+                    .foregroundStyle(fpsColor(monitor.currentFPS))
+            }
+            if showBenchmark {
+                Group {
+                    if monitor.sampleCount == 0 {
+                        Text("Benchmark…")
+                            .foregroundStyle(.white.opacity(0.7))
+                    } else {
+                        Text(String(format: "Avg  %.1f", monitor.avgFPS))
+                        Text(String(format: "Min  %.1f", monitor.minFPS))
+                        Text(String(format: "Max  %.1f", monitor.maxFPS))
+                        Text(String(format: "Stable  %.0f%%", monitor.stabilityPercent))
+                            .foregroundStyle(stabilityColor(monitor.stabilityPercent))
+                        Text("n=\(monitor.sampleCount)")
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                }
+                .font(.system(.caption2, design: .monospaced, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.15), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Performance debug")
+    }
+
+    private func fpsColor(_ fps: Float) -> Color {
+        if fps >= 55 { return Color(red: 0.35, green: 0.90, blue: 0.45) }
+        if fps >= 40 { return Color(red: 0.95, green: 0.75, blue: 0.20) }
+        return Color(red: 0.95, green: 0.30, blue: 0.25)
+    }
+
+    private func stabilityColor(_ pct: Float) -> Color {
+        if pct >= 90 { return Color(red: 0.35, green: 0.90, blue: 0.45) }
+        if pct >= 70 { return Color(red: 0.95, green: 0.75, blue: 0.20) }
+        return Color(red: 0.95, green: 0.30, blue: 0.25)
+    }
+}
+
+struct CampZoneDebugHUD: View {
+    let name: String
+    let distance: Float
+    let bearingDegrees: Float
+    let remainingCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Next camp (debug)")
+                .font(.system(.caption2, design: .serif, weight: .semibold))
+                .foregroundStyle(Color(red: 0.40, green: 0.90, blue: 0.95))
+            Text(name)
+                .font(.system(.caption, design: .serif, weight: .bold))
+                .foregroundStyle(.white)
+            Text(String(format: "%.0f m  ·  %.0f°", distance, bearingDegrees))
+                .font(.system(.caption2, design: .monospaced, weight: .medium))
+                .foregroundStyle(.white.opacity(0.85))
+            if remainingCount > 1 {
+                Text("+\(remainingCount - 1) more unmarked")
+                    .font(.system(.caption2, design: .serif))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(red: 0.30, green: 0.85, blue: 0.90).opacity(0.45), lineWidth: 1)
+        )
+    }
+}
+
+#endif

@@ -78,7 +78,7 @@ struct IntroStoryView: View {
                 HStack {
                     Spacer()
                     Button("Skip") { onBegin() }
-                        .font(.system(size: 14, weight: .semibold, design: .serif))
+                        .font(.system(.subheadline, design: .serif, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.48))
                         .padding(.horizontal, 20)
                         .padding(.top, 18)
@@ -104,7 +104,7 @@ struct IntroStoryView: View {
                     if currentSlide < slides.count - 1 {
                         Button { advanceSlide() } label: {
                             Text("Continue")
-                                .font(.system(size: 16, weight: .bold, design: .serif))
+                                .font(.system(.callout, design: .serif, weight: .bold))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: 200)
                                 .padding(.vertical, 13)
@@ -117,7 +117,7 @@ struct IntroStoryView: View {
                     } else {
                         Button { onBegin() } label: {
                             Text("Begin Your Journey")
-                                .font(.system(size: 16, weight: .bold, design: .serif))
+                                .font(.system(.callout, design: .serif, weight: .bold))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: 260)
                                 .padding(.vertical, 13)
@@ -161,14 +161,14 @@ struct IntroStoryView: View {
                 .shadow(color: slide.iconColor.opacity(0.55), radius: 16)
 
             Text(slide.headline)
-                .font(.system(size: 30, weight: .bold, design: .serif))
+                .font(.system(.title, design: .serif, weight: .bold))
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 14) {
                 ForEach(Array(slide.paragraphs.enumerated()), id: \.offset) { _, para in
                     Text(para)
-                        .font(.system(size: 15, weight: .regular, design: .serif))
+                        .font(.system(.subheadline, design: .serif, weight: .regular))
                         .foregroundStyle(.white.opacity(0.82))
                         .multilineTextAlignment(.center)
                         .lineSpacing(5)

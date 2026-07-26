@@ -33,7 +33,7 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     private let cameraDistanceSpeed: Float = 14
     private var cameraWorldPosition: SCNVector3?
     private let cameraPitchMin: Float = -1.05
-    private let cameraPitchMax: Float = 0.40
+    private let cameraPitchMax: Float = 0.28
     private let playerCollisionRadius: Float = 0.32
 
     let dayNight = DayNightCycle()
@@ -80,6 +80,14 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
     var onCompassHUD: ((Float?) -> Void)?
     /// Detector signal 0…1. `nil` when HUD should hide.
     var onDetectorHUD: ((Float?) -> Void)?
+
+    #if DEBUG
+    /// Nearest undiscovered remote camp for the debug HUD. `nil` when disabled or none left.
+    var onCampZoneDebugHUD: ((CampZoneDebugSnapshot?) -> Void)?
+    private var campZoneDebugEnabled = false
+    private var campDebugRoot: SCNNode?
+    private var campDebugHUDAccumulator: Float = 0
+    #endif
 
     private var wasNearHelper: AnimalNode?
 
@@ -221,7 +229,8 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         voxelWorld.remeshDirtyChunks()
         onBuildProgress?(0.96)
 
-        spawnCamp(site: campSites.first(where: \.isHome)!, progress: slot.progress(forCampId: "home"))
+        guard let homeSite = campSites.first(where: \.isHome) else { return }
+        spawnCamp(site: homeSite, progress: slot.progress(forCampId: "home"))
         camp = camps.first(where: { $0.site.isHome })
 
         waterBodies.removeAll()
@@ -453,7 +462,18 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     private func syncCameraFollow() {
         guard let playerNode else { return }
+        let oldArmPos = cameraArmNode.position
         cameraArmNode.position = playerNode.position
+        // When the arm moves, the cached world-space camera position must shift by the
+        // same delta. Without this, resolveCameraCollision computes prevVec relative to
+        // the *new* look target but using the *old* camera position, which makes the
+        // orbit slerp start from a wrong direction and freeze briefly during fast movement.
+        if var wp = cameraWorldPosition {
+            wp.x += playerNode.position.x - oldArmPos.x
+            wp.y += playerNode.position.y - oldArmPos.y
+            wp.z += playerNode.position.z - oldArmPos.z
+            cameraWorldPosition = wp
+        }
     }
 
     /// Orbit the camera around obstacles: rotate the view ray fluidly and ride the
@@ -506,11 +526,13 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             lookWorld.z + dir.z * dist
         )
 
-        // If the sphere clips while sliding around a surface, glide along the tangent.
+        // Glide along obstacle surfaces so the camera orbits around them.
         pos = slideCameraAlongSurfaces(from: previous, to: pos)
 
-        pos = depenetrateCamera(at: pos)
-        pos = projectCameraOntoLookRay(pos, look: lookWorld, direction: dir, distance: dist)
+        // depenetrateCamera and projectCameraOntoLookRay were removed: they ran
+        // 10+ raycasts per frame and created micro-oscillation near terrain by
+        // fighting the ground-clamp below.  clearCameraDistance + slideCameraAlongSurfaces
+        // already keep the camera clear of geometry.
 
         if let voxelWorld {
             let ground = voxelWorld.surfaceY(atWorldX: pos.x, worldZ: pos.z)
@@ -1073,6 +1095,15 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         checkHelperProximity()
         updateStreaming()
         discoverNearbyCamps()
+        #if DEBUG
+        if campZoneDebugEnabled {
+            campDebugHUDAccumulator += dt
+            if campDebugHUDAccumulator >= 0.25 {
+                campDebugHUDAccumulator = 0
+                publishCampZoneDebugHUD()
+            }
+        }
+        #endif
         syncCameraFollow()
         resolveCameraCollision(deltaTime: dt)
 
@@ -1144,6 +1175,20 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         skyCelestials.setEnabled(enabled)
         metalAtmosphere.skyDetailsSunDisk = enabled ? 1 : 0
     }
+
+    #if DEBUG
+    /// Shows cyan pillars + labels at undiscovered camping zones (debug builds only).
+    func setCampZoneDebugEnabled(_ enabled: Bool) {
+        campZoneDebugEnabled = enabled
+        if enabled {
+            refreshCampDebugMarkers()
+            publishCampZoneDebugHUD()
+        } else {
+            clearCampDebugMarkers()
+            onCampZoneDebugHUD?(nil)
+        }
+    }
+    #endif
 
     private func updateNPCs(deltaTime: Float) {
         guard let playerNode else { return }
@@ -1621,7 +1666,10 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
         cameraArmNode.eulerAngles.y -= yawDelta
         cameraPitch = max(cameraPitchMin, min(cameraPitchMax, cameraPitch + pitchDelta))
         cameraPitchNode.eulerAngles.x = cameraPitch
-        resolveCameraCollision(deltaTime: 1.0 / 60.0)
+        // Do NOT call resolveCameraCollision here — it writes cameraWorldPosition on
+        // the main thread while the render loop reads/writes it on the SceneKit render
+        // thread, causing torn reads that manifest as camera shaking.  The render loop
+        // calls resolveCameraCollision every frame; one-frame latency is imperceptible.
     }
 
     /// Backward-compatible yaw-only helper.
@@ -2059,6 +2107,12 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
             campSpawnPhase = nil
             slotCampProgress[site.id] = slotCampProgress[site.id] ?? CampProgress(id: site.id)
             let discovered = site
+            #if DEBUG
+            if campZoneDebugEnabled {
+                refreshCampDebugMarkers()
+                publishCampZoneDebugHUD()
+            }
+            #endif
             DispatchQueue.main.async { [weak self] in
                 self?.onCampDiscovered?(discovered)
             }
@@ -2147,4 +2201,136 @@ final class DesertScene: SCNScene, SCNPhysicsContactDelegate {
 
     func physicsWorld(_ world: SCNPhysicsWorld, didBegin contact: SCNPhysicsContact) {
     }
+
+    #if DEBUG
+    // MARK: - Camp zone debug
+
+    private func undiscoveredRemoteCamps() -> [CampSite] {
+        campSites.filter { !$0.isHome && !spawnedCampIDs.contains($0.id) }
+    }
+
+    private func clearCampDebugMarkers() {
+        campDebugRoot?.removeFromParentNode()
+        campDebugRoot = nil
+    }
+
+    private func refreshCampDebugMarkers() {
+        guard campZoneDebugEnabled, voxelWorld != nil else { return }
+        clearCampDebugMarkers()
+        let root = SCNNode()
+        root.name = "camp_zone_debug_root"
+
+        for site in undiscoveredRemoteCamps() {
+            let ground = voxelWorld.surfaceY(atWorldX: site.worldX, worldZ: site.worldZ)
+            let marker = makeCampDebugMarker(for: site)
+            marker.position = SCNVector3(site.worldX, ground, site.worldZ)
+            root.addChildNode(marker)
+        }
+
+        rootNode.addChildNode(root)
+        campDebugRoot = root
+    }
+
+    private func makeCampDebugMarker(for site: CampSite) -> SCNNode {
+        let container = SCNNode()
+        container.name = "camp_zone_debug_\(site.id)"
+
+        let pole = SCNCylinder(radius: 0.35, height: 18)
+        pole.firstMaterial = {
+            let m = SCNMaterial()
+            m.diffuse.contents = UIColor(red: 0.15, green: 0.90, blue: 0.95, alpha: 0.85)
+            m.emission.contents = UIColor(red: 0.10, green: 0.70, blue: 0.80, alpha: 1)
+            m.lightingModel = .constant
+            m.writesToDepthBuffer = false
+            return m
+        }()
+        let poleNode = SCNNode(geometry: pole)
+        poleNode.position = SCNVector3(0, 9, 0)
+        poleNode.renderingOrder = 90
+        container.addChildNode(poleNode)
+
+        let beacon = SCNSphere(radius: 1.2)
+        beacon.firstMaterial = {
+            let m = SCNMaterial()
+            m.diffuse.contents = UIColor(red: 0.30, green: 1.0, blue: 1.0, alpha: 0.95)
+            m.emission.contents = UIColor(red: 0.20, green: 0.85, blue: 0.95, alpha: 1)
+            m.lightingModel = .constant
+            m.writesToDepthBuffer = false
+            return m
+        }()
+        let beaconNode = SCNNode(geometry: beacon)
+        beaconNode.position = SCNVector3(0, 18.5, 0)
+        beaconNode.renderingOrder = 91
+        container.addChildNode(beaconNode)
+
+        let label = SCNText(string: site.displayName, extrusionDepth: 0.2)
+        label.font = UIFont.systemFont(ofSize: 4, weight: .bold)
+        label.flatness = 0.2
+        label.firstMaterial = {
+            let m = SCNMaterial()
+            m.diffuse.contents = UIColor.white
+            m.emission.contents = UIColor.white
+            m.lightingModel = .constant
+            return m
+        }()
+        let labelNode = SCNNode(geometry: label)
+        let (minB, maxB) = labelNode.boundingBox
+        labelNode.pivot = SCNMatrix4MakeTranslation(
+            (minB.x + maxB.x) / 2,
+            minB.y,
+            (minB.z + maxB.z) / 2
+        )
+        labelNode.position = SCNVector3(0, 20.5, 0)
+        labelNode.scale = SCNVector3(0.55, 0.55, 0.55)
+        labelNode.constraints = [SCNBillboardConstraint()]
+        labelNode.renderingOrder = 92
+        container.addChildNode(labelNode)
+
+        return container
+    }
+
+    private func publishCampZoneDebugHUD() {
+        guard campZoneDebugEnabled, let playerNode else {
+            onCampZoneDebugHUD?(nil)
+            return
+        }
+        let pending = undiscoveredRemoteCamps()
+        guard !pending.isEmpty else {
+            onCampZoneDebugHUD?(nil)
+            return
+        }
+        let px = playerNode.position.x
+        let pz = playerNode.position.z
+        guard let nearest = pending.min(by: { a, b in
+            let da = (a.worldX - px) * (a.worldX - px) + (a.worldZ - pz) * (a.worldZ - pz)
+            let db = (b.worldX - px) * (b.worldX - px) + (b.worldZ - pz) * (b.worldZ - pz)
+            return da < db
+        }) else {
+            onCampZoneDebugHUD?(nil)
+            return
+        }
+        let dx = nearest.worldX - px
+        let dz = nearest.worldZ - pz
+        let dist = sqrt(dx * dx + dz * dz)
+        var bearing = CampSiteGenerator.bearingTo(x: nearest.worldX, z: nearest.worldZ, fromX: px, fromZ: pz)
+        if bearing < 0 { bearing += Float.pi * 2 }
+        let degrees = bearing * 180 / Float.pi
+        onCampZoneDebugHUD?(CampZoneDebugSnapshot(
+            name: nearest.displayName,
+            distance: dist,
+            bearingDegrees: degrees,
+            remainingCount: pending.count
+        ))
+    }
+    #endif
 }
+
+#if DEBUG
+struct CampZoneDebugSnapshot: Equatable {
+    let name: String
+    let distance: Float
+    let bearingDegrees: Float
+    let remainingCount: Int
+}
+#endif
+

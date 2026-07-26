@@ -72,7 +72,7 @@ struct MissionsOverlayView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 13, weight: .semibold))
                     Text("Back")
-                        .font(.system(size: 15, weight: .semibold, design: .serif))
+                        .font(.system(.subheadline, design: .serif, weight: .semibold))
                 }
                 .foregroundStyle(.white.opacity(0.8))
             }
@@ -85,7 +85,7 @@ struct MissionsOverlayView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.7))
                 Text("Missions")
-                    .font(.system(size: 20, weight: .bold, design: .serif))
+                    .font(.system(.title3, design: .serif, weight: .bold))
                     .foregroundStyle(.white)
             }
 
@@ -96,7 +96,7 @@ struct MissionsOverlayView: View {
                 Image(systemName: "chevron.left").opacity(0)
                 Text("Back").opacity(0)
             }
-            .font(.system(size: 15))
+            .font(.system(.subheadline))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -108,7 +108,7 @@ struct MissionsOverlayView: View {
                 .font(.system(size: 40, weight: .thin))
                 .foregroundStyle(.white.opacity(0.28))
             Text("No missions yet.\nExplore the desert to begin your journey.")
-                .font(.system(size: 15, design: .serif))
+                .font(.system(.subheadline, design: .serif))
                 .foregroundStyle(.white.opacity(0.44))
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
@@ -130,12 +130,12 @@ struct MissionsOverlayView: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(color)
                 Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold, design: .serif))
+                    .font(.system(.caption2, design: .serif, weight: .bold))
                     .foregroundStyle(color)
                     .tracking(1.8)
                 Spacer()
                 Text("\(missions.count)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(.system(.caption2, design: .monospaced, weight: .bold))
                     .foregroundStyle(color.opacity(0.7))
             }
 
@@ -162,10 +162,10 @@ private struct MissionRowView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(mission.title)
-                    .font(.system(size: 14, weight: .bold, design: .serif))
+                    .font(.system(.subheadline, design: .serif, weight: .bold))
                     .foregroundStyle(titleColor)
                 Text(mission.body)
-                    .font(.system(size: 12, design: .serif))
+                    .font(.system(.caption, design: .serif))
                     .foregroundStyle(.white.opacity(status == .active ? 0.70 : 0.48))
                     .lineSpacing(3)
             }
@@ -189,15 +189,15 @@ private struct MissionRowView: View {
         switch status {
         case .active:
             Image(systemName: "circle.dotted")
-                .font(.system(size: 16))
+                .font(.system(.callout))
                 .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22))
         case .completed:
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 16))
+                .font(.system(.callout))
                 .foregroundStyle(Color(red: 0.25, green: 0.78, blue: 0.48))
         case .failed:
             Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 16))
+                .font(.system(.callout))
                 .foregroundStyle(Color(red: 0.80, green: 0.28, blue: 0.22))
         }
     }
@@ -234,19 +234,19 @@ struct MissionOfferView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22))
                     Text("New Mission")
-                        .font(.system(size: 11, weight: .bold, design: .serif))
+                        .font(.system(.caption2, design: .serif, weight: .bold))
                         .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22))
                         .tracking(1.5)
                         .textCase(.uppercase)
                 }
 
                 Text(mission.title)
-                    .font(.system(size: 17, weight: .bold, design: .serif))
+                    .font(.system(.headline, design: .serif, weight: .bold))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
 
                 Text(mission.body)
-                    .font(.system(size: 13, design: .serif))
+                    .font(.system(.footnote, design: .serif))
                     .foregroundStyle(.white.opacity(0.80))
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
@@ -254,7 +254,7 @@ struct MissionOfferView: View {
                 HStack(spacing: 12) {
                     Button { onDismiss() } label: {
                         Text("Dismiss")
-                            .font(.system(size: 14, weight: .semibold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.72))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
@@ -268,7 +268,7 @@ struct MissionOfferView: View {
 
                     Button { onAccept() } label: {
                         Text("Accept")
-                            .font(.system(size: 14, weight: .bold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)

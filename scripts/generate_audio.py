@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Procedurally synthesize Minecraft-style ambient music and soft SFX for Desert Oasis."""
+"""Procedurally synthesize Minecraft-style ambient music and soft SFX for Oasis Keeper."""
 
 from __future__ import annotations
 

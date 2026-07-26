@@ -59,7 +59,8 @@ final class VoxelChunk {
     /// Bulk-replaces all block data from a raw array produced by C++ voxel_gen_chunk.
     /// Layout must match VoxelChunk's internal index: lx + sizeX*(lz + sizeZ*ly).
     func loadBlocks(from raw: [UInt8]) {
-        precondition(raw.count == Self.volume)
+        assert(raw.count == Self.volume)
+        guard raw.count == Self.volume else { return }
         blocks = raw
         isDirty = true
         isTerrainGenerated = true

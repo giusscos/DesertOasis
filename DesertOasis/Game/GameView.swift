@@ -49,6 +49,10 @@ struct GameView: View {
     @State private var stormActive = false
     @State private var compassHUDAngle: Float? = nil
     @State private var detectorHUDSignal: Float? = nil
+    #if DEBUG
+    @State private var performanceMonitor = PerformanceMonitor()
+    @State private var campZoneDebugHUD: CampZoneDebugSnapshot? = nil
+    #endif
 
     private enum GameKey: Hashable {
         case moveForward, moveBack, moveLeft, moveRight
@@ -148,6 +152,18 @@ struct GameView: View {
 
     var slot: SaveSlot { gameManager.saveSlots[slotIndex] }
 
+    #if DEBUG
+    private var debugFrameTimeHandler: ((Float) -> Void)? {
+        { [performanceMonitor] dt in
+            if gameManager.showFPSOverlay || gameManager.benchmarkEnabled {
+                performanceMonitor.sample(deltaTime: dt)
+            }
+        }
+    }
+    #else
+    private var debugFrameTimeHandler: ((Float) -> Void)? { nil }
+    #endif
+
     var body: some View {
         ZStack {
             // 3D game scene
@@ -168,7 +184,8 @@ struct GameView: View {
                 onCameraDrag: { yaw, pitch in
                     guard isPointerLockedGameplay else { return }
                     desertScene.rotateCamera(yawDelta: yaw, pitchDelta: pitch)
-                }
+                },
+                onFrameTime: debugFrameTimeHandler
             )
                 .ignoresSafeArea()
                 .allowsHitTesting(!isLoadingWorld && !isSleeping)
@@ -355,7 +372,7 @@ struct GameView: View {
             if let msg = toastMessage {
                 VStack {
                     Text(msg)
-                        .font(.system(size: 17, weight: .bold, design: .serif))
+                        .font(.system(.headline, design: .serif, weight: .bold))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)
@@ -369,6 +386,37 @@ struct GameView: View {
                 .animation(.easeOut(duration: 0.5), value: toastMessage != nil)
             }
 
+            #if DEBUG
+            if !isLoadingWorld,
+               gameManager.showFPSOverlay || gameManager.benchmarkEnabled || campZoneDebugHUD != nil {
+                VStack {
+                    HStack(alignment: .top, spacing: 8) {
+                        Spacer(minLength: 0)
+                        if gameManager.showFPSOverlay || gameManager.benchmarkEnabled {
+                            FPSDebugOverlay(
+                                monitor: performanceMonitor,
+                                showFPS: gameManager.showFPSOverlay,
+                                showBenchmark: gameManager.benchmarkEnabled
+                            )
+                        }
+                        if let camp = campZoneDebugHUD {
+                            CampZoneDebugHUD(
+                                name: camp.name,
+                                distance: camp.distance,
+                                bearingDegrees: camp.bearingDegrees,
+                                remainingCount: camp.remainingCount
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 52)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+                .zIndex(5)
+            }
+            #endif
+
             // HUD (hidden while chatting / loading / sleeping / paused / settings / missions / intro)
             if !isLoadingWorld, !dialogueManager.isVisible, !isSleeping, !isPaused, !isShowingSettings,
                !isShowingMissions, !isShowingIntro, !isShowingToolPicker, !isShowingTrade,
@@ -377,6 +425,7 @@ struct GameView: View {
                     topInfoBar
                         .padding(.horizontal, 12)
                         .padding(.top, 8)
+                        .dynamicTypeSize(.xSmall ... DynamicTypeSize.accessibility3)
 
                     Spacer()
 
@@ -392,51 +441,7 @@ struct GameView: View {
 
                         Spacer()
 
-                        VStack(alignment: .trailing, spacing: 14) {
-                            if let action = currentAction {
-                                contextActionButton(for: action)
-                                    .transition(.scale.combined(with: .opacity))
-                            }
-
-                            // Tool sits left of run/jump, vertically centered between them.
-                            HStack(alignment: .center, spacing: 14) {
-                                ToolActionButton(
-                                    tool: equippedTool,
-                                    showsKeyCaption: !showsOnScreenJoystick,
-                                    onTap: { cycleTool() },
-                                    onLongPress: {
-                                        AudioManager.shared.play(.uiTap)
-                                        isShowingToolPicker = true
-                                    }
-                                )
-
-                                VStack(spacing: 14) {
-                                    HoldActionButton(
-                                        systemName: "figure.run",
-                                        keyLabel: showsOnScreenJoystick ? nil : "⇧",
-                                        isActive: isRunningHeld,
-                                        activeColor: Color(red: 0.95, green: 0.55, blue: 0.15)
-                                    ) { held in
-                                        if held {
-                                            runSources.insert(.touch)
-                                        } else {
-                                            runSources.remove(.touch)
-                                        }
-                                        syncRunning()
-                                    }
-
-                                    TapActionButton(
-                                        systemName: "arrow.up",
-                                        keyLabel: showsOnScreenJoystick ? nil : "Space"
-                                    ) {
-                                        desertScene.jump()
-                                    }
-                                }
-                            }
-                        }
-                        .animation(.spring(duration: 0.3), value: currentAction != nil)
-                        .padding(.trailing, 28)
-                        .padding(.bottom, 28)
+                        hudActionButtons
                     }
                 }
                 .transition(.opacity)
@@ -477,9 +482,22 @@ struct GameView: View {
         .onChange(of: gameManager.skyDetailsEnabled) { _, enabled in
             desertScene.setSkyDetailsEnabled(enabled)
         }
+        #if DEBUG
+        .onChange(of: gameManager.benchmarkEnabled) { _, enabled in
+            performanceMonitor.setBenchmarking(enabled)
+        }
+        .onChange(of: gameManager.showCampZoneDebug) { _, enabled in
+            desertScene.setCampZoneDebugEnabled(enabled)
+            if !enabled { campZoneDebugHUD = nil }
+        }
+        #endif
         .onAppear {
             PointerLockBridge.wantsLock = isPointerLockedGameplay
             desertScene.setSkyDetailsEnabled(gameManager.skyDetailsEnabled)
+            #if DEBUG
+            performanceMonitor.setBenchmarking(gameManager.benchmarkEnabled)
+            desertScene.setCampZoneDebugEnabled(gameManager.showCampZoneDebug)
+            #endif
             guard !sceneBuilt else { return }
             sceneBuilt = true
             carryingWater = slot.isCarryingWater
@@ -561,6 +579,57 @@ struct GameView: View {
 
             desertScene.build(from: slot)
         }
+    }
+
+    // MARK: - HUD action buttons
+
+    @ViewBuilder private var hudActionButtons: some View {
+        VStack(alignment: .trailing, spacing: 14) {
+            if let action = currentAction {
+                contextActionButton(for: action)
+                    .transition(.scale.combined(with: .opacity))
+            }
+
+            // Tool sits left of run/jump, vertically centered between them.
+            HStack(alignment: .center, spacing: 14) {
+                ToolActionButton(
+                    tool: equippedTool,
+                    showsKeyCaption: !showsOnScreenJoystick,
+                    onTap: { cycleTool() },
+                    onLongPress: {
+                        AudioManager.shared.play(.uiTap)
+                        isShowingToolPicker = true
+                    }
+                )
+
+                VStack(spacing: 14) {
+                    HoldActionButton(
+                        systemName: "figure.run",
+                        keyLabel: showsOnScreenJoystick ? nil : "⇧",
+                        isActive: isRunningHeld,
+                        activeColor: Color(red: 0.95, green: 0.55, blue: 0.15)
+                    ) { held in
+                        if held {
+                            runSources.insert(.touch)
+                        } else {
+                            runSources.remove(.touch)
+                        }
+                        syncRunning()
+                    }
+
+                    TapActionButton(
+                        systemName: "arrow.up",
+                        keyLabel: showsOnScreenJoystick ? nil : "Space"
+                    ) {
+                        desertScene.jump()
+                    }
+                }
+            }
+        }
+        .animation(.spring(duration: 0.3), value: currentAction != nil)
+        .padding(.trailing, 28)
+        .padding(.bottom, 28)
+        .dynamicTypeSize(.xSmall ... DynamicTypeSize.accessibility3)
     }
 
     // MARK: - Keyboard / pause
@@ -771,7 +840,7 @@ struct GameView: View {
 
                 if carryingWater {
                     Label("Bucket", systemImage: "drop.fill")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(.caption2, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
                         .frame(height: 40)
@@ -780,7 +849,7 @@ struct GameView: View {
 
                 if tradeBeads > 0 {
                     Label("\(tradeBeads)", systemImage: "circle.hexagongrid.fill")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(.caption2, weight: .bold))
                         .foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.22))
                         .padding(.horizontal, 12)
                         .frame(height: 40)
@@ -789,7 +858,7 @@ struct GameView: View {
 
                 if stormActive {
                     Label("Storm", systemImage: "wind")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(.caption2, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
                         .frame(height: 40)
@@ -851,7 +920,7 @@ struct GameView: View {
             Image(systemName: icon).foregroundStyle(color)
             Text("\(value)").foregroundStyle(.white)
         }
-        .font(.system(size: 12, weight: .bold))
+        .font(.system(.caption, weight: .bold))
         .padding(.horizontal, 12)
         .frame(height: 40)
         .background(.black.opacity(0.45), in: Capsule())
@@ -1081,6 +1150,14 @@ struct GameView: View {
             saveMissions()
         }
 
+        #if DEBUG
+        desertScene.onCampZoneDebugHUD = { snapshot in
+            DispatchQueue.main.async {
+                campZoneDebugHUD = snapshot
+            }
+        }
+        #endif
+
         desertScene.onTimeOfDayChanged = { t in
             DispatchQueue.main.async {
                 timeOfDay = t
@@ -1188,6 +1265,10 @@ struct GameView: View {
                 showToast("\(name) returns to the dunes.")
             }
         }
+
+        #if DEBUG
+        desertScene.setCampZoneDebugEnabled(gameManager.showCampZoneDebug)
+        #endif
     }
 
     private func persistCamp(_ campId: String) {
@@ -1299,6 +1380,12 @@ struct GameView: View {
         guard !isSleeping, canSleepNow else { return }
         withAnimation { isSleeping = true }
         desertScene.beginSleep()
+        // If beginSleep returned early (e.g. scene's isDuskOrNight check disagrees with
+        // our stale @State timeOfDay, or camp is nil), roll the sleeping flag back so the
+        // game doesn't freeze permanently with the sleep overlay locked on.
+        if !desertScene.isSleeping {
+            withAnimation { isSleeping = false }
+        }
     }
 
     @ViewBuilder
@@ -1307,9 +1394,9 @@ struct GameView: View {
             ZStack(alignment: .topTrailing) {
                 VStack(spacing: 3) {
                     Image(systemName: action.icon)
-                        .font(.system(size: 22, weight: .bold))
+                        .font(.system(.title2, weight: .bold))
                     Text(action.label)
-                        .font(.system(size: 11, weight: .bold, design: .serif))
+                        .font(.system(.caption2, design: .serif, weight: .bold))
                 }
                 .foregroundStyle(.white)
                 .frame(width: 64, height: 64)
@@ -1590,7 +1677,7 @@ struct SleepOverlay: View {
         VStack {
             Spacer()
             Text("Night falls over the oasis…")
-                .font(.system(size: 22, weight: .bold, design: .serif))
+                .font(.system(.title2, design: .serif, weight: .bold))
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.5), radius: 8)
                 .opacity(pulse ? 1 : 0.7)
@@ -1634,11 +1721,11 @@ struct PauseOverlay: View {
 
             VStack(spacing: 22) {
                 Text("Paused")
-                    .font(.system(size: 34, weight: .bold, design: .serif))
+                    .font(.system(.largeTitle, design: .serif, weight: .bold))
                     .foregroundStyle(.white)
 
                 Text("Cursor unlocked — click Resume (or Esc), then click the game to capture the cursor again.")
-                    .font(.system(size: 14, weight: .medium, design: .serif))
+                    .font(.system(.subheadline, design: .serif, weight: .medium))
                     .foregroundStyle(.white.opacity(0.75))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
@@ -1647,7 +1734,7 @@ struct PauseOverlay: View {
                     Button(action: onResume) {
                         HStack(spacing: 10) {
                             Text("Resume")
-                                .font(.system(size: 17, weight: .bold, design: .serif))
+                                .font(.system(.headline, design: .serif, weight: .bold))
                             KeyCaptionBadge(label: "Esc")
                         }
                         .foregroundStyle(.white)
@@ -1659,7 +1746,7 @@ struct PauseOverlay: View {
 
                     Button(action: onDiary) {
                         Text("Keeper's Diary")
-                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .semibold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: 260)
                             .padding(.vertical, 12)
@@ -1669,7 +1756,7 @@ struct PauseOverlay: View {
 
                     Button(action: onAchievements) {
                         Text("Achievements")
-                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .semibold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: 260)
                             .padding(.vertical, 12)
@@ -1679,7 +1766,7 @@ struct PauseOverlay: View {
 
                     Button(action: onLeaderboards) {
                         Label("Leaderboards", systemImage: "chart.bar.fill")
-                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .semibold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: 260)
                             .padding(.vertical, 12)
@@ -1689,7 +1776,7 @@ struct PauseOverlay: View {
 
                     Button(action: onExitToCamp) {
                         Text("Back to Camp")
-                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .font(.system(.subheadline, design: .serif, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.9))
                             .frame(maxWidth: 260)
                             .padding(.vertical, 12)
@@ -1746,12 +1833,12 @@ struct WorldLoadingOverlay: View {
                 .padding(.bottom, 4)
 
                 Text("Shaping the desert")
-                    .font(.system(size: 26, weight: .bold, design: .serif))
+                    .font(.system(.title, design: .serif, weight: .bold))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.55), radius: 6)
 
                 Text(statusText)
-                    .font(.system(size: 14, weight: .medium, design: .serif))
+                    .font(.system(.subheadline, design: .serif, weight: .medium))
                     .foregroundStyle(.white.opacity(0.75))
 
                 VStack(spacing: 8) {
@@ -1776,7 +1863,7 @@ struct WorldLoadingOverlay: View {
                     .frame(height: 10)
 
                     Text("\(Int((progress * 100).rounded()))%")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .font(.system(.caption, design: .monospaced, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.65))
                 }
                 .frame(maxWidth: 260)
@@ -1842,6 +1929,8 @@ struct GameSceneView: UIViewRepresentable {
     var onKeyDown: ((GameHardwareKey) -> Void)?
     var onKeyUp: ((GameHardwareKey) -> Void)?
     var onCameraDrag: ((Float, Float) -> Void)?
+    /// Raw frame delta (seconds) from the SceneKit render loop.
+    var onFrameTime: ((Float) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(scene: scene)
@@ -1905,6 +1994,7 @@ struct GameSceneView: UIViewRepresentable {
         context.coordinator.onKeyDown = onKeyDown
         context.coordinator.onKeyUp = onKeyUp
         context.coordinator.onCameraDrag = onCameraDrag
+        context.coordinator.onFrameTime = onFrameTime
         uiView.onKeyDown = { [weak coordinator = context.coordinator] key in
             coordinator?.onKeyDown?(key)
         }
@@ -1928,6 +2018,7 @@ struct GameSceneView: UIViewRepresentable {
         var onKeyDown: ((GameHardwareKey) -> Void)?
         var onKeyUp: ((GameHardwareKey) -> Void)?
         var onCameraDrag: ((Float, Float) -> Void)?
+        var onFrameTime: ((Float) -> Void)?
         var cameraPanGesture: UIPanGestureRecognizer?
         private var lastTime: TimeInterval?
 
@@ -1943,6 +2034,7 @@ struct GameSceneView: UIViewRepresentable {
                 dt = 1.0 / 60.0
             }
             lastTime = time
+            onFrameTime?(dt)
             scene.update(deltaTime: dt)
             if let view = renderer as? SCNView {
                 view.pointOfView = scene.activeCameraNode
@@ -2168,7 +2260,8 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
     private func touchCameraDelta(dx: CGFloat, dy: CGFloat) -> (Float, Float) {
         let w = max(320, bounds.width)
         let h = max(320, bounds.height)
-        return (Float(dx / w) * .pi * 1.6, Float(dy / h) * .pi * 1.2)
+        // Full-screen swipe = ~190° yaw / ~145° pitch — comfortable TPS sensitivity.
+        return (Float(dx / w) * .pi * 1.05, Float(dy / h) * .pi * 0.80)
     }
 
     private func beginCameraInertia() {
@@ -2197,11 +2290,11 @@ final class GameSCNView: SCNView, UIGestureRecognizerDelegate {
             cancelCameraInertia()
             return
         }
-        // Decay: velocity reaches ~5% after ≈1 second at 60fps
-        panVelocity.x *= 0.90
-        panVelocity.y *= 0.90
+        // Decay: velocity reaches ~1% after ≈0.9 s at 60 fps (0.92^60 ≈ 0.007)
+        panVelocity.x *= 0.92
+        panVelocity.y *= 0.92
 
-        let threshold: CGFloat = 6
+        let threshold: CGFloat = 3
         guard abs(panVelocity.x) > threshold || abs(panVelocity.y) > threshold else {
             cancelCameraInertia()
             return
@@ -2365,7 +2458,7 @@ struct KeyCaptionBadge: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .font(.system(.caption2, design: .rounded, weight: .bold))
             .foregroundStyle(.white)
             .padding(.horizontal, label.count > 2 ? 5 : 0)
             .frame(minWidth: 18, minHeight: 18)
@@ -2383,7 +2476,7 @@ struct TapActionButton: View {
         Button(action: onTap) {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: systemName)
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(.title2, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 64, height: 64)
                     .background(.black.opacity(0.38), in: Circle())
